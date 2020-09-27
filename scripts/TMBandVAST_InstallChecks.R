@@ -1,7 +1,8 @@
 #####
 ## TMB and VAST install tests
 #####
-
+library(TMB)
+library(VAST)
 
 # TMB ---------------------------------------------------------------------
 Version = "linear_mixed_model"
