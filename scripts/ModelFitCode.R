@@ -3,15 +3,6 @@
 #####
 # Preliminaries ----------------------------------------------------------
 # True/False switch as there might be a few packages that need to be installed IF running on DO server
-libary(devtools)
-do_server<- FALSE
-if(do_server){
-  devtools::install_github("ropensci/rnaturalearthdata")
-  devtools::install_github("thomasp85/patchwork")
-  devtools::install_github("HenrikBengtsson/future.apply@1.3.0")
-  devtools::install_github("HenrikBengtsson/future.apply@1.3.0")
-}
-
 # Libraries and sourcing functions
 library(TMB)
 library(VAST)
@@ -28,9 +19,12 @@ source(here::here("scripts", "VASTfunctions_AJAedits.R"))
 source(here::here("scripts", "VAST_wrapper_func.R"))
 
 # Laod in data -----------------------------------------------------------
-download_tf<- file.exists(here::here("data", "ForecastingChallengeModelData.csv"))
+download_tf<- file.exists(paste("/home/andrew.allyn@gmail.com/ForecastingChallenge/Data/", 
+"ForecastingChallengeModelData.csv", sep = ""))
+
 if(download_tf){
-  dat<- read.csv(here::here("data", "ForecastingChallengeModelData.csv"))
+  dat<- read.csv(paste("/home/andrew.allyn@gmail.com/ForecastingChallenge/Data/", 
+                       "ForecastingChallengeModelData.csv", sep = ""))
 } else {
   drive_download(file = "ForecastingChallengeModelData.csv", path = here::here("data", "ForecastingChallengeModelData.csv"))
   dat<- read.csv(here::here("data", "ForecastingChallengeModelData.csv"))
