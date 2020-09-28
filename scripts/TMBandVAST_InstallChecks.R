@@ -56,3 +56,12 @@ fit = fit_model("settings"=settings, "Lat_i"=example$sampling_data[,'Lat'],
 # Plot results
 plot(fit)
 
+
+# Error... ----------------------------------------------------------------
+# After detaching VAST, TMB and FishStatsUtils...
+install.packages("TMB")
+library(devtools)
+devtools::install_github("james-thorson/FishStatsUtils", ref = "2.7.0", force = TRUE, INSTALL_opts="--no-staged-install")
+install.packages("INLA", repos=c(getOption("repos"), force = TRUE, INLA="https://inla.r-inla-download.org/R/stable"), dep=TRUE)
+install_github("james-thorson/VAST", force = TRUE, ref = "3.6.0")
+
