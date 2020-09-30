@@ -35,11 +35,7 @@ Obj$fn(Obj$par)
 
 
 # VAST --------------------------------------------------------------------
-install_github("james-thorson/FishStatsUtils", ref = "2.7.0", INSTALL_opts = "--no-staged-install")
-
-install.packages("INLA", repos=c(getOption("repos"), force = TRUE, INLA="https://inla.r-inla-download.org/R/stable"), dep=TRUE)
-
-devtools::install_github("james-thorson/VAST", ref = "3.6.0")
+library(VAST)
 
 setwd("/home/andrew.allyn@gmail.com/ForecastingChallenge/Temp Results/") 
 # change for your requirements; this is where model results and plots will be saved
@@ -58,16 +54,4 @@ fit = fit_model("settings"=settings, "Lat_i"=example$sampling_data[,'Lat'],
                 "Lon_i"=example$sampling_data[,'Lon'], "t_i"=example$sampling_data[,'Year'], 
                 "c_i"=rep(0,nrow(example$sampling_data)), "b_i"=example$sampling_data[,'Catch_KG'], 
                 "a_i"=example$sampling_data[,'AreaSwept_km2'], "v_i"=example$sampling_data[,'Vessel'])
-
-# Plot results
-plot(fit)
-
-
-# Error... ----------------------------------------------------------------
-# After detaching VAST, TMB and FishStatsUtils...
-install.packages("TMB")
-library(devtools)
-devtools::install_github("james-thorson/FishStatsUtils", ref = "2.7.0", force = TRUE, INSTALL_opts="--no-staged-install")
-install.packages("INLA", repos=c(getOption("repos"), force = TRUE, INLA="https://inla.r-inla-download.org/R/stable"), dep=TRUE)
-install_github("james-thorson/VAST", force = TRUE, ref = "3.6.0")
 

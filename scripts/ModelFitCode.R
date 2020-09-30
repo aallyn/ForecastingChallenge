@@ -15,10 +15,17 @@ library(rnaturalearth)
 library(rnaturalearthdata)
 library(future.apply)
 
-source(here::here("scripts", "VASTfunctions_AJAedits.R"))
-source(here::here("scripts", "VAST_wrapper_func.R"))
+docker<- TRUE
+if(docker){
+  source("/home/andrew.allyn@gmail.com/GitHub/ForecastingChallenge/scripts/VASTfunctions_AJAedits.R")
+  source("/home/andrew.allyn@gmail.com/GitHub/ForecastingChallenge/scripts/VAST_wrapper_func.R")
+} else {
+  source(here::here("scripts", "VASTfunctions_AJAedits.R"))
+  source(here::here("scripts", "VAST_wrapper_func.R"))
+}
 
-# Laod in data -----------------------------------------------------------
+
+# Load in data -----------------------------------------------------------
 download_tf<- file.exists(paste("/home/andrew.allyn@gmail.com/ForecastingChallenge/Data/", 
 "ForecastingChallengeModelData.csv", sep = ""))
 
@@ -31,6 +38,9 @@ if(download_tf){
 }
 
 glimpse(dat)
+
+# Land shapefile for mapping
+land<- st_read("/home/andrew.allyn@gmail.com/Shapefiles/ne_50m_land/ne_50m_land.shp") 
 
 # For testing, reduce data set to speed up model fits
 testing<- TRUE
@@ -51,16 +61,37 @@ cov_dat_cols<- c("ID", "EST_YEAR", "STRATUM", "DECDEG_BEGLAT", "DECDEG_BEGLON", 
 
 ### Model fit settings
 # Extrapolation Grid
+# VAST
 knots_use<- 400
 max_dist_from_sample<- 10
-grid_dim_km<- c(5, 5)
+grid_dim_km<- c(25, 25)
 region_code<- "northwest_atlantic"
 strat_limits<- unique(dat$STRATUM)[order(unique(dat$STRATUM))]
 
+# User supplied
+# Make extrapolation grid from shapefile
+nelme<- st_read("/home/andrew.allyn@gmail.com/Shapefiles/NELME_regions/NELME_sf.shp")
+nelme.utm<- nelme %>%
+  st_transform(., crs = 32619)
+
+nelme_grid<- convert_shapefile("/home/andrew.allyn@gmail.com/Shapefiles/NELME_regions/NELME_sf.shp", projargs = NULL, projargs_for_shapefile = NULL, grid_dim_km = grid_dim_km, make_plots = FALSE, area_tolerance = 0.05)
+
+# Visualize
+xlim<- c(-76, -65) 
+ylim<- c(35, 45)
+
+extrap_plot<- ggplot() +
+  geom_point(data = nelme_grid$extrapolation_grid, aes(x = Lon, y = Lat), size = 0.05) +
+  geom_sf(data = land, fill = "#f6f6f6", color = "light gray") +
+  coord_sf(xlim, ylim, expand = FALSE) +    
+  xlab("") +
+  ylab("")
+extrap_plot
+
 # Spatial, Spatio-temporal factors, and then temporal correlation in intercepts and spatio-temporal factors.
-# First try -- ideal situation with spatial, spatio-temporal correlations and temporal structure in intercept and spatio-temporal factors
-fieldconfig_all1<- c("Omega1" = 1, "Epsilon1" = 1, "Omega2" = 1, "Epsilon2" = 1)
-rhoconfig_intrw_epsar1<- c("Beta1" = 2, "Beta2" = 2, "Epsilon1" = 4, "Epsilon2" = 4)
+# First try -- the basic model
+fieldconfig_base<- c("Omega1" = 0, "Epsilon1" = 0, "Omega2" = 0, "Epsilon2" = 0)
+rhoconfig_base<- c("Beta1" = 0, "Beta2" = 0, "Epsilon1" = 0, "Epsilon2" = 0)
 
 # Observation model ("Poisson" link function)
 obsmodel_use<- c("PosDist" = 1, "EncProbForm" = 1)
@@ -68,10 +99,11 @@ obsmodel_use<- c("PosDist" = 1, "EncProbForm" = 1)
 # Options -- want SD_observation_density
 options_use<- c("SD_site_logdensity" = FALSE, "Calculate_Range" = FALSE, "Calculate_effective_area" = FALSE, "Calculate_Cov_SE" = FALSE, "Calculate_Synchrony" = FALSE, "Calculate_proportion" = FALSE, "SD_observation_density" = TRUE)
 
-settings_start<- make_settings(n_x = knots_use, Region = region_code, strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_all1, RhoConfig = rhoconfig_intrw_epsar1, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, fine_scale = TRUE, bias.correct = FALSE)
+settings_start_user<- make_settings(n_x = 100, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_base, RhoConfig = rhoconfig_base, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = TRUE)
 
 ### Model formula/fit stuff
 formula_use<- ~ splines::bs(AVGDEPTH, knots = 3, intercept = FALSE)
+formula_use<- ~ AVGDEPTH
 
 # Create a nested data frame
 dat_nest<- dat %>%
@@ -134,10 +166,14 @@ for(h in 1:forecast_challenges){
     
     # Model fit wrapper function
     # Check the model fit
-    fit.check<- fit_model("settings" = settings_start, strata.limits = strat.limits, "Lat_i" = samp.dat[,'Lat'], "Lon_i" = samp.dat[,'Lon'], "t_i" = as.vector(samp.dat[,'Year']), "b_i" = samp.dat[,'Catch_KG'], "c_iz" = rep(0, nrow(samp.dat)), "v_i" = rep(0, nrow(samp.dat)), "Q_ik" = NULL, "a_i" = rep(area.swept, nrow(samp.dat)), "PredTF_i" = samp.dat[,'PRED_TF'], covariate_data = cov.dat, formula = formula.use, "observations_LL" = cbind("Lat" = samp.dat[,'Lat'], "Lon" = samp.dat[, 'Lon']), "maximum_distance_from_sample" = maximum.dist.from.sample, "grid_dim_km" = grid.dim.km, "working_dir" = OutFile, "run_model" = FALSE)
+    fit.check<- fit_model("settings" = settings_start_user,
+                          # Extrapolation and spatial info
+                          Region = "/home/andrew.allyn@gmail.com/Shapefiles/NELME_regions/NELME_sf.shp", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_base, RhoConfig = rhoconfig_base, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = TRUE, observations_LL = cbind("Lat" = samp_dat[,'Lat'], "Lon" = samp_dat[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = FALSE, area_tolerance = 0.05,
+                          # Model info
+                          "Lat_i" = samp_dat[,'Lat'], "Lon_i" = samp_dat[,'Lon'], "t_i" = as.vector(samp_dat[,'Year']), "b_i" = samp_dat[,'Catch_KG'], "c_iz" = rep(0, nrow(samp_dat)), "v_i" = rep(0, nrow(samp_dat)), "Q_ik" = NULL, "a_i" = rep(area_swept, nrow(samp_dat)), "PredTF_i" = samp_dat[,'PRED_TF'], covariate_data = cov_dat, X1_formula = formula_use, X2_formula = formula_use, "working_dir" = paste(outfile, "/", sep = ""), "run_model" = TRUE, "test_fit" = FALSE, "getReportCovariance" = FALSE, "getJointPrecision" = TRUE)
     
     # All ready, run for real
-    fit.check<- fit_model("settings" = settings.use, strata.limits = strat.limits, "Lat_i" = samp.dat[,'Lat'], "Lon_i" = samp.dat[,'Lon'], "t_i" = as.vector(samp.dat[,'Year']), "b_i" = samp.dat[,'Catch_KG'], "c_iz" = rep(0, nrow(samp.dat)), "v_i" = rep(0, nrow(samp.dat)), "Q_ik" = NULL, "a_i" = rep(area.swept, nrow(samp.dat)), "PredTF_i" = samp.dat[,'PRED_TF'], covariate_data = cov.dat, formula = formula.use, "observations_LL" = cbind("Lat" = samp.dat[,'Lat'], "Lon" = samp.dat[, 'Lon']), "maximum_distance_from_sample" = maximum.dist.from.sample, "grid_dim_km" = grid.dim.km, "working_dir" = OutFile, "run_model" = TRUE)
+    fit.check<- fit_model("settings" = settings.use, strata.limits = strat.limits, "Lat_i" = samp.dat[,'Lat'], "Lon_i" = samp.dat[,'Lon'], "t_i" = as.vector(samp.dat[,'Year']), "b_i" = samp.dat[,'Catch_KG'], "c_iz" = rep(0, nrow(samp.dat)), "v_i" = rep(0, nrow(samp.dat)), "Q_ik" = NULL, "a_i" = rep(area.swept, nrow(samp.dat)), "PredTF_i" = samp.dat[,'PRED_TF'], covariate_data = cov.dat, formula = formula.use, "observations_LL" = cbind("Lat" = samp.dat[,'Lat'], "Lon" = samp.dat[, 'Lon']), "maximum_distance_from_sample" = maximum.dist.from.sample, "grid_dim_km" = grid.dim.km, "working_dir" = outfile, "run_model" = TRUE)
     
     # Save model fit object...
     save(fit.mod, file = paste(OutFile, "/", fore.dates, "_modelfit.rds", sep = ""))
