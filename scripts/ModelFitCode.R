@@ -94,16 +94,23 @@ fieldconfig_base<- c("Omega1" = 0, "Epsilon1" = 0, "Omega2" = 0, "Epsilon2" = 0)
 rhoconfig_base<- c("Beta1" = 0, "Beta2" = 0, "Epsilon1" = 0, "Epsilon2" = 0)
 
 # Observation model ("Poisson" link function)
-obsmodel_use<- c("PosDist" = 1, "EncProbForm" = 1)
+obsmodel_use<- c("PosDist" = 4, "EncProbForm" = 1)
 
 # Options -- want SD_observation_density
 options_use<- c("SD_site_logdensity" = FALSE, "Calculate_Range" = FALSE, "Calculate_effective_area" = FALSE, "Calculate_Cov_SE" = FALSE, "Calculate_Synchrony" = FALSE, "Calculate_proportion" = FALSE, "SD_observation_density" = TRUE)
 
-settings_start_user<- make_settings(n_x = 100, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_base, RhoConfig = rhoconfig_base, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = TRUE)
+settings_base<- make_settings(n_x = 400, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_base, RhoConfig = rhoconfig_base, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = FALSE)
+
+# Persistent spatial correlation settings
+fieldconfig_sp<- c("Omega1" = 1, "Epsilon1" = 0, "Omega2" = 1, "Epsilon2" = 0)
+settings_sp<- make_settings(n_x = 400, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_sp, RhoConfig = rhoconfig_base, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = TRUE)
+
+# Persistent spatial and spatio-temporal correlation settings
+fieldconfig_spst<- c("Omega1" = 1, "Epsilon1" = 1, "Omega2" = 1, "Epsilon2" = 1)
+settings_spst<- make_settings(n_x = 400, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_spst, RhoConfig = rhoconfig_base, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = TRUE)
 
 ### Model formula/fit stuff
 formula_use<- ~ splines::bs(AVGDEPTH, knots = 3, intercept = FALSE)
-formula_use<- ~ AVGDEPTH
 
 # Create a nested data frame
 dat_nest<- dat %>%
@@ -137,15 +144,22 @@ for(h in 1:forecast_challenges){
       dir.create(outfile)
     }
     
-    # Create sample data frame. 
-    samp_dat<- dat_run %>%
-      select(., one_of(samp_dat_cols))
-   
-    # Define the PRED_TF vector, if 0, then observation is used in likelihood, and if 1, then only in predictive probability...
-    samp_dat$PRED_TF<- ifelse(samp_dat$EST_YEAR < fore_challenges[h], 0, 1)
+    # Create sample data frame. Going to need one of these for the base when it just has the training data years. For the other models, we can include all the data and set the PRED_TF vector to 0 to signal the model to use the observation in the likelihood and 1. For the "base" model without temporal structure on the intercept, we can't do this. We get an error in the fitting process "Error in solve.default(h, g) : Lapack routine dgesv: system is exactly singular: U[4,4] = 0". I think this is because the model is trying to fit an intercept to years without any data? 
+    samp_dat_base<- dat_run %>%
+      select(., one_of(samp_dat_cols)) %>%
+      filter(., EST_YEAR < fore_challenges[h])
+    samp_dat_base$PRED_TF<- rep(0, nrow(samp_dat_base))
     
+    samp_dat_all<- dat_run %>%
+      select(., one_of(samp_dat_cols))
+    samp_dat_all$PRED_TF<- ifelse(samp_dat_all$EST_YEAR < fore_challenges[h], 0, 1)
+   
     # Finally, need to rename columns...
-    samp_dat<- samp_dat %>%
+    samp_dat_base<- samp_dat_base %>%
+      rename(., c("Year" = "EST_YEAR", "Lat" = "DECDEG_BEGLAT", "Lon" = "DECDEG_BEGLON", "Catch_KG" = "SUM_BIOMASS")) %>%
+      data.frame()
+    
+    samp_dat_all<- samp_dat_all %>%
       rename(., c("Year" = "EST_YEAR", "Lat" = "DECDEG_BEGLAT", "Lon" = "DECDEG_BEGLON", "Catch_KG" = "SUM_BIOMASS")) %>%
       data.frame()
     
@@ -163,14 +177,36 @@ for(h in 1:forecast_challenges){
       rename(., c("Year" = "EST_YEAR", "Lat" = "DECDEG_BEGLAT", "Lon" = "DECDEG_BEGLON")) %>%
       select(., one_of(c("Year", "Lat", "Lon", covs))) %>%
       data.frame()
+
+    # Base and all
+    cov_dat_base<- cov_dat %>%
+      filter(., Year < fore_challenges[h])
+    cov_dat_all<- cov_dat
     
     # Model fit wrapper function
-    # Check the model fit
-    fit.check<- fit_model("settings" = settings_start_user,
+    fit_base<- fit_model("settings" = settings_base,
                           # Extrapolation and spatial info
-                          Region = "/home/andrew.allyn@gmail.com/Shapefiles/NELME_regions/NELME_sf.shp", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_base, RhoConfig = rhoconfig_base, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = TRUE, observations_LL = cbind("Lat" = samp_dat[,'Lat'], "Lon" = samp_dat[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = FALSE, area_tolerance = 0.05,
+                          Region = "/home/andrew.allyn@gmail.com/Shapefiles/NELME_regions/NELME_sf.shp", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_base, RhoConfig = rhoconfig_base, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, observations_LL = cbind("Lat" = samp_dat_base[,'Lat'], "Lon" = samp_dat_base[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = FALSE, area_tolerance = 0.05,
                           # Model info
-                          "Lat_i" = samp_dat[,'Lat'], "Lon_i" = samp_dat[,'Lon'], "t_i" = as.vector(samp_dat[,'Year']), "b_i" = samp_dat[,'Catch_KG'], "c_iz" = rep(0, nrow(samp_dat)), "v_i" = rep(0, nrow(samp_dat)), "Q_ik" = NULL, "a_i" = rep(area_swept, nrow(samp_dat)), "PredTF_i" = samp_dat[,'PRED_TF'], covariate_data = cov_dat, X1_formula = formula_use, X2_formula = formula_use, "working_dir" = paste(outfile, "/", sep = ""), "run_model" = TRUE, "test_fit" = FALSE, "getReportCovariance" = FALSE, "getJointPrecision" = TRUE)
+                          "Lat_i" = samp_dat_base[,'Lat'], "Lon_i" = samp_dat_base[,'Lon'], "t_i" = as.vector(samp_dat_base[,'Year']), "b_i" = samp_dat_base[,'Catch_KG'], "c_iz" = rep(0, nrow(samp_dat_base)), "v_i" = rep(0, nrow(samp_dat_base)), "Q_ik" = NULL, "a_i" = rep(area_swept, nrow(samp_dat_base)), covariate_data = cov_dat_base, X1_formula = formula_use, X2_formula = formula_use, "PredTF_i" = samp_dat_base[,'PRED_TF'], "working_dir" = paste(outfile, "/", sep = ""), "run_model" = TRUE, "test_fit" = FALSE, "getReportCovariance" = FALSE, "getJointPrecision" = TRUE)
+    save(fit_base, file = paste(outfile, "/", fore_dates, "_base_modelfit.rds", sep = ""))
+    
+    # Turn on persistent spatial correlation
+    fit_sp<- fit_model("settings" = settings_sp,
+                         # Extrapolation and spatial info
+                         Region = "/home/andrew.allyn@gmail.com/Shapefiles/NELME_regions/NELME_sf.shp", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_sp, RhoConfig = rhoconfig_base, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_base[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = FALSE, area_tolerance = 0.05,
+                         # Model info
+                         "Lat_i" = samp_dat_base[,'Lat'], "Lon_i" = samp_dat_base[,'Lon'], "t_i" = as.vector(samp_dat_base[,'Year']), "b_i" = samp_dat_base[,'Catch_KG'], "c_iz" = rep(0, nrow(samp_dat_base)), "v_i" = rep(0, nrow(samp_dat_base)), "Q_ik" = NULL, "a_i" = rep(area_swept, nrow(samp_dat_base)), covariate_data = cov_dat_base, X1_formula = formula_use, X2_formula = formula_use, "PredTF_i" = samp_dat_base[,'PRED_TF'], "working_dir" = paste(outfile, "/", sep = ""), "run_model" = TRUE, "test_fit" = FALSE, "getReportCovariance" = FALSE, "getJointPrecision" = TRUE)
+    save(fit_sp, file = paste(outfile, "/", fore_dates, "_sp_modelfit.rds", sep = ""))
+    
+    
+    # Turn on persistent spatial and ephemeral spatio-temporal correlation
+    fit_spst<- fit_model("settings" = settings_spst,
+                       # Extrapolation and spatial info
+                       Region = "/home/andrew.allyn@gmail.com/Shapefiles/NELME_regions/NELME_sf.shp", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_spst, RhoConfig = rhoconfig_base, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_base[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = FALSE, area_tolerance = 0.05,
+                       # Model info
+                       "Lat_i" = samp_dat_base[,'Lat'], "Lon_i" = samp_dat_base[,'Lon'], "t_i" = as.vector(samp_dat_base[,'Year']), "b_i" = samp_dat_base[,'Catch_KG'], "c_iz" = rep(0, nrow(samp_dat_base)), "v_i" = rep(0, nrow(samp_dat_base)), "Q_ik" = NULL, "a_i" = rep(area_swept, nrow(samp_dat_base)), covariate_data = cov_dat_base, X1_formula = formula_use, X2_formula = formula_use, "PredTF_i" = samp_dat_base[,'PRED_TF'], "working_dir" = paste(outfile, "/", sep = ""), "run_model" = TRUE, "test_fit" = FALSE, "getReportCovariance" = FALSE, "getJointPrecision" = TRUE)
+    
     
     # All ready, run for real
     fit.check<- fit_model("settings" = settings.use, strata.limits = strat.limits, "Lat_i" = samp.dat[,'Lat'], "Lon_i" = samp.dat[,'Lon'], "t_i" = as.vector(samp.dat[,'Year']), "b_i" = samp.dat[,'Catch_KG'], "c_iz" = rep(0, nrow(samp.dat)), "v_i" = rep(0, nrow(samp.dat)), "Q_ik" = NULL, "a_i" = rep(area.swept, nrow(samp.dat)), "PredTF_i" = samp.dat[,'PRED_TF'], covariate_data = cov.dat, formula = formula.use, "observations_LL" = cbind("Lat" = samp.dat[,'Lat'], "Lon" = samp.dat[, 'Lon']), "maximum_distance_from_sample" = maximum.dist.from.sample, "grid_dim_km" = grid.dim.km, "working_dir" = outfile, "run_model" = TRUE)
