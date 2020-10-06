@@ -6,6 +6,7 @@
 library(tidyverse)
 library(here)
 library(sf)
+library(raster)
 source("https://raw.githubusercontent.com/GMRI-SEL/LabFunctionsandCode/master/GenerateSharedPathsScript.R")
 
 # Load raw trawl data ----------------------------------------------------------
@@ -104,7 +105,11 @@ dat.mod %>%
   summarize(., "TowPerSpp" = n_distinct(ID))
 
 # Extracting environmental covariates at trawl locations ----------------------------------------------------------
+## SODA environmental data
+soda<- raster::stack("/home/andrew.allyn@gmail.com/ForecastingChallenge/Data/soda3.4.2_mn_ocean_reg_1980.nc")
 
+# Test save
+writeRaster(soda, filename = "/home/rstudio/ForecastingChallenge/Temp Results/soda_temp.grd")
 # Save it....
 saveRDS(dat.mod, file = here::here("data", "ForecastingChallengeModelData.rds"))
 write.csv(dat.mod, file = here::here("data", "ForecastingChallengeModelData.csv"))
