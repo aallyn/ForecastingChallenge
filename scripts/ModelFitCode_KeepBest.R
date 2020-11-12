@@ -1,5 +1,5 @@
 #####
-## NSF C-Accel Forecasting Challenge (09/15/2020)
+## NSF C-Accel Forecasting Challenge (11/12/2020)
 #####
 # Preliminaries ----------------------------------------------------------
 # True/False switch as there might be a few packages that need to be installed IF running on DO server
@@ -21,10 +21,12 @@ library(doParallel)
 filter <- dplyr::filter
 select <- dplyr::select
 
-docker<- FALSE
+docker<- TRUE
 if(docker){
-  source("/home/andrew.allyn@gmail.com/GitHub/ForecastingChallenge/scripts/VASTfunctions_AJAedits.R")
-  source("/home/andrew.allyn@gmail.com/GitHub/ForecastingChallenge/scripts/VAST_wrapper_func.R")
+  #source("/home/andrew.allyn@gmail.com/GitHub/ForecastingChallenge/scripts/VASTfunctions_AJAedits.R")
+  #source("/home/andrew.allyn@gmail.com/GitHub/ForecastingChallenge/scripts/VAST_wrapper_func.R")
+  source(here::here("scripts", "VASTfunctions_AJAedits.R"))
+  source(here::here("scripts", "VAST_wrapper_func.R"))
 } else {
   source(here::here("scripts", "VASTfunctions_AJAedits.R"))
   source(here::here("scripts", "VAST_wrapper_func.R"))
@@ -76,7 +78,7 @@ strat_limits<- data.frame("STRATA" = unique(dat$STRATUM)[order(unique(dat$STRATU
 # Make extrapolation grid from shapefile
 if(docker){
   # NELME grid
-  nelme_grid<- convert_shapefile("/home/andrew.allyn@gmail.com/Shapefiles/NELME_regions/NELME_sf.shp", projargs = NULL, projargs_for_shapefile = NULL, grid_dim_km = grid_dim_km, make_plots = FALSE, area_tolerance = 0.05)
+  nelme_grid<- convert_shapefile("/home/andrew.allyn@gmail.com/Shapefiles/NELME_regions/NELME_sf.shp", projargs = "+proj=utm +zone=19 +ellps=WGS84 +datum=WGS84 +units=km +no_defs", projargs_for_shapefile = "+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs", grid_dim_km = grid_dim_km, make_plots = FALSE, area_tolerance = 2)
 } else {
   # NELME grid
   nelme_grid<- convert_shapefile(paste(res_dat_path, "Shapefiles/NELME_regions/NELME_sf.shp", sep = ""), projargs = "+proj=utm +zone=19 +ellps=WGS84 +datum=WGS84 +units=km +no_defs", projargs_for_shapefile = "+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs", grid_dim_km = grid_dim_km, make_plots = FALSE, area_tolerance = 2)
@@ -126,7 +128,11 @@ if(testing){
 }
 
 # Output folder
-out_folder<- shared.path(os = os.use, group = "Mills Lab", folder = "Projects/ForecastingChallenge/Temp Results/")
+if(docker){
+  out_folder<- "/home/andrew.allyn@gmail.com/ForecastingChallenge/Temp Results/"
+} else {
+  out_folder<- shared.path(os = os.use, group = "Mills Lab", folder = "Projects/ForecastingChallenge/Temp Results/")
+}
 
 # Detecting cores
 cores_avail<- detectCores()
