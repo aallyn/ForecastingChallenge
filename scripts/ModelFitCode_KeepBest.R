@@ -35,10 +35,9 @@ if(docker){
 # Load in data -----------------------------------------------------------
 if(docker){
   # Fisheries data
-  dat<- read.csv(paste("/home/andrew.allyn@gmail.com/ForecastingChallenge/Data/", 
-                         "ForecastingChallengeModelData.csv", sep = ""))
+  dat<- read.csv(here::here("data", "ForecastingChallengeModelData.csv"))
   # Land shapefile for mapping
-  land<- st_read("/home/andrew.allyn@gmail.com/Shapefiles/ne_50m_land/ne_50m_land.shp")
+  #land<- st_read("/home/andrew.allyn@gmail.com/Shapefiles/ne_50m_land/ne_50m_land.shp")
 } else {
   # Fisheries data
   fish_dat_path<- shared.path(os = os.use, group = "Mills Lab", folder = "Projects/ForecastingChallenge/data/")
@@ -78,7 +77,7 @@ strat_limits<- data.frame("STRATA" = unique(dat$STRATUM)[order(unique(dat$STRATU
 # Make extrapolation grid from shapefile
 if(docker){
   # NELME grid
-  nelme_grid<- convert_shapefile("/home/andrew.allyn@gmail.com/Shapefiles/NELME_regions/NELME_sf.shp", projargs = "+proj=utm +zone=19 +ellps=WGS84 +datum=WGS84 +units=km +no_defs", projargs_for_shapefile = "+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs", grid_dim_km = grid_dim_km, make_plots = FALSE, area_tolerance = 2)
+  nelme_grid<- convert_shapefile(here::here("data", "NELME_sf.shp"), projargs = "+proj=utm +zone=19 +ellps=WGS84 +datum=WGS84 +units=km +no_defs", projargs_for_shapefile = "+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs", grid_dim_km = grid_dim_km, make_plots = FALSE, area_tolerance = 2)
 } else {
   # NELME grid
   nelme_grid<- convert_shapefile(paste(res_dat_path, "Shapefiles/NELME_regions/NELME_sf.shp", sep = ""), projargs = "+proj=utm +zone=19 +ellps=WGS84 +datum=WGS84 +units=km +no_defs", projargs_for_shapefile = "+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs", grid_dim_km = grid_dim_km, make_plots = FALSE, area_tolerance = 2)
@@ -130,9 +129,17 @@ if(testing){
 # Output folder
 if(docker){
   out_folder<- "/home/andrew.allyn@gmail.com/ForecastingChallenge/Temp Results/"
+  if(!file.exists(out_folder)){
+    dir.create(out_folder)
+  }
 } else {
   out_folder<- shared.path(os = os.use, group = "Mills Lab", folder = "Projects/ForecastingChallenge/Temp Results/")
 }
+
+# Docker file output testing
+test<- write_csv(data.frame("testing" = "test"), paste(out_folder, "/testing.csv", sep = ""))
+x<- scp(host = "root@198.211.115.165/:/home/andrew.allyn@gmail.com/ForecastingChallenge/Temp Results/testing.csv", path = "~/Desktop/testing.csv", key = "/Users/aallyn/.ssh/id_rsa", keypasswd = "Maine1985!", binary = FALSE)
+system("scp -r root@198.211.115.165/:/home/andrew.allyn@gmail.com/ForecastingChallenge/Temp Results/testing.csv ~/Desktop/testing.csv")
 
 # Detecting cores
 cores_avail<- detectCores()
