@@ -138,7 +138,7 @@ if(docker){
 
 # Docker file output testing
 test<- write_csv(data.frame("testing" = "test"), paste(out_folder, "/testing.csv", sep = ""))
-x<- scp(host = "root@198.211.115.165/:/home/andrew.allyn@gmail.com/ForecastingChallenge/Temp Results/testing.csv", path = "~/Desktop/testing.csv", key = "/Users/aallyn/.ssh/id_rsa", keypasswd = "Maine1985!", binary = FALSE)
+x<- scp(host = "root@68.183.105.72/:/home/andrew.allyn@gmail.com/ForecastingChallenge/Temp Results/testing.csv", path = "~/Desktop/testing.csv", key = "./.ssh/authorized_keys", keypasswd = "Maine1985!", binary = FALSE)
 system("scp -r root@198.211.115.165/:/home/andrew.allyn@gmail.com/ForecastingChallenge/Temp Results/testing.csv ~/Desktop/testing.csv")
 
 # Detecting cores
