@@ -67,9 +67,9 @@ cov_dat_cols<- c("ID", "EST_YEAR", "STRATUM", "DECDEG_BEGLAT", "DECDEG_BEGLON", 
 ### Model fit settings
 # Extrapolation Grid
 # VAST
-n_x_use<- 100
+n_x_use<- 400
 max_dist_from_sample<- 25
-grid_dim_km<- c(50, 50)
+grid_dim_km<- c(25, 25)
 region_code<- "northwest_atlantic"
 strat_limits<- data.frame("STRATA" = unique(dat$STRATUM)[order(unique(dat$STRATUM))])
 
@@ -136,14 +136,13 @@ if(docker){
   out_folder<- shared.path(os = os.use, group = "Mills Lab", folder = "Projects/ForecastingChallenge/Temp Results/")
 }
 
-# Docker file output testing
-test<- write_csv(data.frame("testing" = "test"), paste(out_folder, "/testing.csv", sep = ""))
-x<- scp(host = "root@68.183.105.72/:/home/andrew.allyn@gmail.com/ForecastingChallenge/Temp Results/testing.csv", path = "~/Desktop/testing.csv", key = "./.ssh/authorized_keys", keypasswd = "Maine1985!", binary = FALSE)
-system("scp -r root@198.211.115.165/:/home/andrew.allyn@gmail.com/ForecastingChallenge/Temp Results/testing.csv ~/Desktop/testing.csv")
-
 # Detecting cores
 cores_avail<- detectCores()
 registerDoParallel(cores_avail-1) 
+
+fore_challenges<- fore_challenges[11]
+dat_nest<- dat_nest %>% 
+  filter(., COMNAME == "ATLANTIC COD" & SEASON == "FALL")
 
 for(h in seq_along(fore_challenges)){
   
@@ -207,7 +206,7 @@ for(h in seq_along(fore_challenges)){
     cov_dat_base$Year<- rep(min(cov_dat_base$Year), nrow(cov_dat_base))
     
     # Model fit wrapper function
-    fit_base<- try(fit_model("settings" = settings_forebase,
+    fit_base<- try(fit_model_eff("settings" = settings_forebase,
                      # Spatial info
                      observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
                      # Model info
@@ -400,7 +399,7 @@ for(h in seq_along(fore_challenges)){
           fieldconfig_simp<- c("Omega1" = 0, "Epsilon1" = 0, "Omega2" = 0, "Epsilon2" = 0)
           rhoconfig_simp<- c("Beta1" = 1, "Beta2" = 1, "Epsilon1" = 0, "Epsilon2" = 0)
           
-          settings_simp<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_simp, RhoConfig = rhoconfig_simp, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = TRUE)
+          settings_simp<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_simp, RhoConfig = rhoconfig_simp, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = FALSE)
           
           # Model fit wrapper function
           fit_simp<- try(fit_model("settings" = settings_simp,
