@@ -35,7 +35,7 @@ fit_model_eff<- function(settings, Lat_i, Lon_i, t_i, b_i, a_i, c_iz = rep(0, le
     Use_REML = TRUE
     newtonsteps = 1
   }
-  extra_args = list("grid_dim_km" = grid_dim_km, "observations_LL" = observations_LL)
+  extra_args = list(...)
   extra_args = c(extra_args, extra_args$extrapolation_args, 
                  extra_args$spatial_args, extra_args$optimize_args, extra_args$model_args)
   data_frame = data.frame(Lat_i = Lat_i, Lon_i = Lon_i, a_i = a_i, 
@@ -136,6 +136,7 @@ fit_model_eff<- function(settings, Lat_i, Lon_i, t_i, b_i, a_i, c_iz = rep(0, le
   if(max(abs(parameter_estimates$diagnostics$final_gradient)) > 0.01){
     Return = "Bad fit"
     class(Return)<- "try-error"
+    return(Return)
   } else {
     optimize_args_default2 = list(obj = tmb_list$Obj, lower = tmb_list$Lower, upper = tmb_list$Upper, savedir = working_dir, bias.correct = settings$bias.correct, newtonsteps = newtonsteps, bias.correct.control = list(sd = FALSE,  split = NULL, nsplit = 1, vars_to_correct = settings$vars_to_correct), control = list(eval.max = 10000, iter.max = 10000, trace = 1), loopnum = 1)
     optimize_args_input2 = combine_lists(input = extra_args, 
