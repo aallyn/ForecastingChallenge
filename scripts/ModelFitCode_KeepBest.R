@@ -18,16 +18,16 @@ library(gmRi)
 os.use<- "unix"
 library(parallel)
 library(doParallel)
-library(profvis)
 filter <- dplyr::filter
 select <- dplyr::select
 
-docker<- FALSE
+docker<- TRUE
 if(docker){
   #source("/home/andrew.allyn@gmail.com/GitHub/ForecastingChallenge/scripts/VASTfunctions_AJAedits.R")
   #source("/home/andrew.allyn@gmail.com/GitHub/ForecastingChallenge/scripts/VAST_wrapper_func.R")
   source(here::here("scripts", "VASTfunctions_AJAedits.R"))
   source(here::here("scripts", "VAST_wrapper_func.R"))
+  source(here::here("scripts", "fit_model_eff.R"))
 } else {
   source(here::here("scripts", "VASTfunctions_AJAedits.R"))
   source(here::here("scripts", "VAST_wrapper_func.R"))
@@ -78,10 +78,10 @@ strat_limits<- data.frame("STRATA" = unique(dat$STRATUM)[order(unique(dat$STRATU
 # Make extrapolation grid from shapefile
 if(docker){
   # NELME grid
-  nelme_grid<- convert_shapefile(here::here("data", "NELME_sf.shp"), projargs = "+proj=utm +zone=19 +ellps=WGS84 +datum=WGS84 +units=km +no_defs", projargs_for_shapefile = "+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs", grid_dim_km = grid_dim_km, make_plots = FALSE, area_tolerance = 0.05)
+  nelme_grid<- convert_shapefile(here::here("data", "NELME_sf.shp"), projargs = "+proj=utm +zone=19 +ellps=WGS84 +datum=WGS84 +units=km +no_defs", projargs_for_shapefile = "+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs", grid_dim_km = grid_dim_km, make_plots = FALSE, area_tolerance = 2)
 } else {
   # NELME grid
-  nelme_grid<- convert_shapefile(here::here("data", "NELME_sf.shp"), projargs = "+proj=utm +zone=19 +ellps=WGS84 +datum=WGS84 +units=km +no_defs", projargs_for_shapefile = "+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs", grid_dim_km = grid_dim_km, make_plots = FALSE, area_tolerance = 0.05)
+  nelme_grid<- convert_shapefile(paste(res_dat_path, "Shapefiles/NELME_regions/NELME_sf.shp", sep = ""), projargs = "+proj=utm +zone=19 +ellps=WGS84 +datum=WGS84 +units=km +no_defs", projargs_for_shapefile = "+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs", grid_dim_km = grid_dim_km, make_plots = FALSE, area_tolerance = 2)
 }
 
 # Visualize
@@ -108,7 +108,7 @@ obsmodel_use<- c("PosDist" = 4, "EncProbForm" = 1)
 # Options -- want SD_observation_density
 options_use<- c("SD_site_logdensity" = FALSE, "Calculate_Range" = FALSE, "Calculate_effective_area" = FALSE, "Calculate_Cov_SE" = FALSE, "Calculate_Synchrony" = FALSE, "Calculate_proportion" = FALSE, "SD_observation_density" = TRUE)
 
-settings_forebase<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_forebase, RhoConfig = rhoconfig_forebase, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = FALSE)
+settings_forebase<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_forebase, RhoConfig = rhoconfig_forebase, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = TRUE)
 
 ### Model formula/fit stuff
 formula_use<- ~ splines::bs(AVGDEPTH, knots = NULL, intercept = FALSE) +
@@ -137,21 +137,14 @@ if(docker){
   out_folder<- shared.path(os = os.use, group = "Mills Lab", folder = "Projects/ForecastingChallenge/Temp Results/")
 }
 
-# Docker file output testing
-test<- write_csv(data.frame("testing" = "test"), paste(out_folder, "/testing.csv", sep = ""))
-x<- scp(host = "root@68.183.105.72/:/home/andrew.allyn@gmail.com/ForecastingChallenge/Temp Results/testing.csv", path = "~/Desktop/testing.csv", key = "./.ssh/authorized_keys", keypasswd = "Maine1985!", binary = FALSE)
-system("scp -r root@198.211.115.165/:/home/andrew.allyn@gmail.com/ForecastingChallenge/Temp Results/testing.csv ~/Desktop/testing.csv")
-
 # Detecting cores
 cores_avail<- detectCores()
 registerDoParallel(cores_avail-1) 
 
-dat_nest<- dat_nest %>%
-  filter(., COMNAME == "ATLANTIC COD" & SEASON == "FALL")
+fore_challenges<- fore_challenges[1]
+dat_nest<- dat_nest %>% 
+  filter(., COMNAME == "ATLANTIC COD" & SEASON == "SPRING")
 
-fore_challenges<- fore_challenges[15]
-
-profvis({
 for(h in seq_along(fore_challenges)){
   
   # Get description for forecast challenge, based on years model will predict to
@@ -214,7 +207,7 @@ for(h in seq_along(fore_challenges)){
     cov_dat_base$Year<- rep(min(cov_dat_base$Year), nrow(cov_dat_base))
     
     # Model fit wrapper function
-    fit_base<- try(fit_model("settings" = settings_forebase,
+    fit_base<- try(fit_model_eff("settings" = settings_forebase,
                      # Spatial info
                      observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
                      # Model info
@@ -229,10 +222,10 @@ for(h in seq_along(fore_challenges)){
       # Basic forecast model worked, add on complexity...
       # Try adding on autoregressive structure to the intercept and remake settings
       rhoconfig_betaAR1<- c("Beta1" = 4, "Beta2" = 4, "Epsilon1" = 1, "Epsilon2" = 1)
-      settings_betaAR1<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_forebase, RhoConfig = rhoconfig_betaAR1, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = FALSE)
+      settings_betaAR1<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_forebase, RhoConfig = rhoconfig_betaAR1, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = TRUE)
       
       # Refit the model
-      fit_betaAR1<- try(fit_model("settings" = settings_betaAR1,
+      fit_betaAR1<- try(fit_model_eff("settings" = settings_betaAR1,
                            # Spatial info
                            observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
                            # Model info
@@ -245,10 +238,10 @@ for(h in seq_along(fore_challenges)){
         write(progress_new, file = paste(outfile, "/", fore_dates, "progress.txt", sep = ""), append = TRUE)
         
         rhoconfig_bothAR1<- c("Beta1" = 4, "Beta2" = 4, "Epsilon1" = 4, "Epsilon2" = 4)
-        settings_bothR1<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_forebase, RhoConfig = rhoconfig_bothAR1, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = FALSE)
+        settings_bothR1<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_forebase, RhoConfig = rhoconfig_bothAR1, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = TRUE)
         
         # Refit the model
-        fit_bothAR1<- try(fit_model("settings" = settings_bothAR1,
+        fit_bothAR1<- try(fit_model_eff("settings" = settings_bothAR1,
                                     # Spatial info
                                     observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
                                     # Model info
@@ -271,10 +264,10 @@ for(h in seq_along(fore_challenges)){
           
           # Adjusting settings
           rhoconfig_betaAR1stRW<- c("Beta1" = 4, "Beta2" = 4, "Epsilon1" = 2, "Epsilon2" = 2)
-          settings_betaAR1stRW<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_forebase, RhoConfig = rhoconfig_betaAR1stRW, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = FALSE)
+          settings_betaAR1stRW<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_forebase, RhoConfig = rhoconfig_betaAR1stRW, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = TRUE)
           
           # Refit the model
-          fit_betaAR1stRW<- try(fit_model("settings" = settings_betaAR1stRW,
+          fit_betaAR1stRW<- try(fit_model_eff("settings" = settings_betaAR1stRW,
                                           # Spatial info
                                           observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
                                           # Model info
@@ -309,10 +302,10 @@ for(h in seq_along(fore_challenges)){
 
         # Try RW
         rhoconfig_betaRW<- c("Beta1" = 2, "Beta2" = 2, "Epsilon1" = 1, "Epsilon2" = 1)
-        settings_betaRW<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_forebase, RhoConfig = rhoconfig_betaRW, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = FALSE)
+        settings_betaRW<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_forebase, RhoConfig = rhoconfig_betaRW, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = TRUE)
         
         # Refit the model
-        fit_betaRW<- try(fit_model("settings" = settings_betaRW,
+        fit_betaRW<- try(fit_model_eff("settings" = settings_betaRW,
                                     # Spatial info
                                     observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
                                     # Model info
@@ -351,10 +344,10 @@ for(h in seq_along(fore_challenges)){
       fieldconfig_nost<- c("Omega1" = 1, "Epsilon1" = 0, "Omega2" = 1, "Epsilon2" = 0)
       rhoconfig_nost<- c("Beta1" = 1, "Beta2" = 1, "Epsilon1" = 0, "Epsilon2" = 0)
       
-      settings_nost<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_nost, RhoConfig = rhoconfig_nost, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = FALSE)
+      settings_nost<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_nost, RhoConfig = rhoconfig_nost, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = TRUE)
       
       # Model fit wrapper function
-      fit_nost<- try(fit_model("settings" = settings_nost,
+      fit_nost<- try(fit_model_eff("settings" = settings_nost,
                                # Spatial info
                                observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
                                # Model info
@@ -379,10 +372,10 @@ for(h in seq_along(fore_challenges)){
         fieldconfig_nosp<- c("Omega1" = 0, "Epsilon1" = 1, "Omega2" = 0, "Epsilon2" = 1)
         rhoconfig_nosp<- c("Beta1" = 1, "Beta2" = 1, "Epsilon1" = 1, "Epsilon2" = 1)
         
-        settings_nosp<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_nosp, RhoConfig = rhoconfig_nosp, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = FALSE)
+        settings_nosp<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_nosp, RhoConfig = rhoconfig_nosp, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = TRUE)
         
         # Model fit wrapper function
-        fit_nosp<- try(fit_model("settings" = settings_nosp,
+        fit_nosp<- try(fit_model_eff("settings" = settings_nosp,
                                  # Spatial info
                                  observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
                                  # Model info
@@ -410,7 +403,7 @@ for(h in seq_along(fore_challenges)){
           settings_simp<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_simp, RhoConfig = rhoconfig_simp, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = FALSE)
           
           # Model fit wrapper function
-          fit_simp<- try(fit_model("settings" = settings_simp,
+          fit_simp<- try(fit_model_eff("settings" = settings_simp,
                                    # Spatial info
                                    observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
                                    # Model info
@@ -438,7 +431,6 @@ for(h in seq_along(fore_challenges)){
   }
   # End outer loop over forecast challenge scenarios
 }
-})
 
 
 # Model fitting INTRA ANNUAL  --------------------------------------------------------------
