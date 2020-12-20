@@ -19,6 +19,7 @@ library(gmRi)
 os.use<- "unix"
 library(parallel)
 library(doParallel)
+library(doFuture)
 filter <- dplyr::filter
 select <- dplyr::select
 
@@ -138,10 +139,6 @@ if(docker){
   out_folder<- shared.path(os = os.use, group = "Mills Lab", folder = "Projects/ForecastingChallenge/Temp Results/")
 }
 
-# Detecting cores
-cores_avail<- detectCores()
-registerDoParallel(cores_avail-2) 
-
 dat_nest<- dat_nest %>% 
   filter(., COMNAME == "ATLANTIC COD")
 
@@ -151,17 +148,37 @@ fore_challenges_df<- data.frame("COMNAME" = rep(unique(dat_nest$COMNAME), each =
 dat_nest<- dat_nest %>%
   left_join(., fore_challenges_df, by = c("COMNAME" = "COMNAME"))
 
+# Detecting cores
+cores_avail<- detectCores()
+library(doFuture)
+registerDoFuture()
+plan(multisession, workers = cores_avail-2)
+
 # I kept getting errors with the compilation here when trying to run in parallel. Not sure why, but trying something by running a simple example to get the VAST_cpp and VAST_so files. Then copying those into the folders as needed.
+## Setup really simple example for testing
+library(VAST)
+example <- load_example( data_set="EBS_pollock" )
+dat <- subset(example$sampling_data, Year==2013)
+settings <- make_settings(n_x=100, Region=example$Region,
+                          purpose="index2", bias.correct=FALSE )
+settings$FieldConfig[1:2, 1:2] <- 0
+
+## Default settings to compile the latest CPP in the R package
+## directory 'executables'
+fit = fit_model(settings=settings,
+                working_dir=here::here(),
+                Lat_i=dat$Lat, Lon_i=dat$Lon, t_i=dat$Year,
+                b_i=dat$Catch_KG, a_i=dat$AreaSwept_km2)
+
+vast_files<- c(paste(here::here(), "VAST_v12_0_0.cpp", sep = "/"), paste(here::here(), "VAST_v12_0_0.so", sep = "/"), paste(here::here(), "VAST_v12_0_0.o", sep = "/"))
 
 # Seemed really slow...
+#all<- dat_nest
 all<- dat_nest
-dat_nest<- all[1,]
 
 foreach(i = 1:nrow(dat_nest)) %dopar% {
-  library(tidyverse)
-  library(INLA)
+  
   library(VAST)
-  library(TMB)
   
   #for(i in 1:nrow(dat_nest)){
   
@@ -180,18 +197,19 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
   }
   
   # Copy over the VAST files
-  vast_files<- c(paste(here::here(), "VAST_v12_0_0.cpp", sep = "/"), paste(here::here(), "VAST_v12_0_0.so", sep = "/"), paste(here::here(), "VAST_v12_0_0.o", sep = "/"))
-  file.copy(vast_files, outfolder)
+  #file.copy(vast_files, outfolder)
   
-  # Create sub-folder
-  outfile<- paste(outfolder, "/", paste(fore_dates, season_run, spp_run, sep = "_"), sep = "")
-  if(!file.exists(outfile)){
-    dir.create(outfile)
-  }
+  # Create output file root
+  outfile<- paste(outfolder, "/", fore_dates, sep = "")
+  # outfile<- paste(outfolder, "/", paste(fore_dates, season_run, spp_run, sep = "_"), sep = "")
+  # if(!file.exists(outfile)){
+  #   dir.create(outfile)
+  # }
+  # 
   
   # Text file to print progress
   progress_out<- "Starting"
-  write(progress_out, file = paste(outfile, "/", "progress.txt", sep = ""), append = FALSE)
+  write(progress_out, file = paste(outfile, "_progress.txt", sep = ""), append = FALSE)
   
   # Create sample data frame and manipulating PRED_TF such that when PRED_TF = 0, the observation is used in the calculation of the likelihood. In contrast, observations with PRED_TF = 1 will not be used in the likelihood, but we will get a model prediction for those observations.
   samp_dat_all<- dat_run %>%
@@ -232,13 +250,13 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
                                # Spatial info
                                observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
                                # Model info
-                               "Lat_i" = samp_dat_all[,'Lat'], "Lon_i" = samp_dat_all[,'Lon'], "t_i" = as.vector(samp_dat_all[,'Year']), "b_i" = samp_dat_base[,'Catch_KG'], "c_iz" = rep(0, nrow(samp_dat_all)), "v_i" = rep(0, nrow(samp_dat_all)), "Q_ik" = NULL, "a_i" = rep(area_swept, nrow(samp_dat_all)), covariate_data = cov_dat_all, X1_formula = formula_use, X2_formula = formula_use, "PredTF_i" = samp_dat_all[,'PRED_TF'], "working_dir" = paste(outfile, "/", sep = ""), "CompileDir" = outfolder, "run_model" = TRUE, "test_fit" = FALSE, "getReportCovariance" = FALSE, "getJointPrecision" = TRUE, Use_REML = TRUE), silent = TRUE)
+                               "Lat_i" = samp_dat_all[,'Lat'], "Lon_i" = samp_dat_all[,'Lon'], "t_i" = as.vector(samp_dat_all[,'Year']), "b_i" = samp_dat_base[,'Catch_KG'], "c_iz" = rep(0, nrow(samp_dat_all)), "v_i" = rep(0, nrow(samp_dat_all)), "Q_ik" = NULL, "a_i" = rep(area_swept, nrow(samp_dat_all)), covariate_data = cov_dat_all, X1_formula = formula_use, X2_formula = formula_use, "PredTF_i" = samp_dat_all[,'PRED_TF'], "working_dir" = outfolder, "CompileDir" = here::here(), "run_model" = TRUE, "test_fit" = FALSE, "getReportCovariance" = FALSE, "getJointPrecision" = TRUE, Use_REML = TRUE), silent = TRUE)
   
   # If our basic forecasting model worked, let's add in some complexity...
   if(class(fit_base) == "fit_model" && (max(abs(fit_base$parameter_estimates$diagnostics$final_gradient)) <= 0.01)){
     # Append progress file
     progress_new<- "Base model has passed fit checks, trying to add complexity"
-    write(progress_new, file = paste(outfile, "/", "progress.txt", sep = ""), append = TRUE)
+    write(progress_new, file = paste(outfile, "_progress.txt", sep = ""), append = TRUE)
     
     # Basic forecast model worked, add on complexity...
     # Try adding on autoregressive structure to the intercept and remake settings
@@ -250,13 +268,13 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
                                     # Spatial info
                                     observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
                                     # Model info
-                                    "Lat_i" = samp_dat_all[,'Lat'], "Lon_i" = samp_dat_all[,'Lon'], "t_i" = as.vector(samp_dat_all[,'Year']), "b_i" = samp_dat_base[,'Catch_KG'], "c_iz" = rep(0, nrow(samp_dat_all)), "v_i" = rep(0, nrow(samp_dat_all)), "Q_ik" = NULL, "a_i" = rep(area_swept, nrow(samp_dat_all)), covariate_data = cov_dat_all, X1_formula = formula_use, X2_formula = formula_use, "PredTF_i" = samp_dat_all[,'PRED_TF'], "working_dir" = paste(outfile, "/", sep = ""), "CompileDir" = outfolder, "run_model" = TRUE, "test_fit" = FALSE, "getReportCovariance" = FALSE, "getJointPrecision" = TRUE, Use_REML = TRUE), silent = TRUE)
+                                    "Lat_i" = samp_dat_all[,'Lat'], "Lon_i" = samp_dat_all[,'Lon'], "t_i" = as.vector(samp_dat_all[,'Year']), "b_i" = samp_dat_base[,'Catch_KG'], "c_iz" = rep(0, nrow(samp_dat_all)), "v_i" = rep(0, nrow(samp_dat_all)), "Q_ik" = NULL, "a_i" = rep(area_swept, nrow(samp_dat_all)), covariate_data = cov_dat_all, X1_formula = formula_use, X2_formula = formula_use, "PredTF_i" = samp_dat_all[,'PRED_TF'], "working_dir" = outfolder, "CompileDir" = here::here(), "run_model" = TRUE, "test_fit" = FALSE, "getReportCovariance" = FALSE, "getJointPrecision" = TRUE, Use_REML = TRUE), silent = TRUE)
     
     # If that worked, let's try AR1 on spatio-temporal structure too...
     if(class(fit_betaAR1) == "fit_model" && (max(abs(fit_betaAR1$parameter_estimates$diagnostics$final_gradient)) <= 0.01)) {
       # Append progress file
       progress_new<- "Adding AR1 to beta converged, now trying to add temporal structure to spatio-temporal variability too"
-      write(progress_new, file = paste(outfile, "/", "progress.txt", sep = ""), append = TRUE)
+      write(progress_new, file = paste(outfile, "_progress.txt", sep = ""), append = TRUE)
       
       rhoconfig_bothAR1<- c("Beta1" = 4, "Beta2" = 4, "Epsilon1" = 4, "Epsilon2" = 4)
       settings_bothR1<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_forebase, RhoConfig = rhoconfig_bothAR1, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = TRUE)
@@ -266,22 +284,22 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
                                       # Spatial info
                                       observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
                                       # Model info
-                                      "Lat_i" = samp_dat_all[,'Lat'], "Lon_i" = samp_dat_all[,'Lon'], "t_i" = as.vector(samp_dat_all[,'Year']), "b_i" = samp_dat_base[,'Catch_KG'], "c_iz" = rep(0, nrow(samp_dat_all)), "v_i" = rep(0, nrow(samp_dat_all)), "Q_ik" = NULL, "a_i" = rep(area_swept, nrow(samp_dat_all)), covariate_data = cov_dat_all, X1_formula = formula_use, X2_formula = formula_use, "PredTF_i" = samp_dat_all[,'PRED_TF'], "working_dir" = paste(outfile, "/", sep = ""), "CompileDir" = outfolder, "run_model" = TRUE, "test_fit" = FALSE, "getReportCovariance" = FALSE, "getJointPrecision" = TRUE, Use_REML = TRUE), silent = TRUE)
+                                      "Lat_i" = samp_dat_all[,'Lat'], "Lon_i" = samp_dat_all[,'Lon'], "t_i" = as.vector(samp_dat_all[,'Year']), "b_i" = samp_dat_base[,'Catch_KG'], "c_iz" = rep(0, nrow(samp_dat_all)), "v_i" = rep(0, nrow(samp_dat_all)), "Q_ik" = NULL, "a_i" = rep(area_swept, nrow(samp_dat_all)), covariate_data = cov_dat_all, X1_formula = formula_use, X2_formula = formula_use, "PredTF_i" = samp_dat_all[,'PRED_TF'], "working_dir" = outfolder, "CompileDir" = here::here(), "run_model" = TRUE, "test_fit" = FALSE, "getReportCovariance" = FALSE, "getJointPrecision" = TRUE, Use_REML = TRUE), silent = TRUE)
       
       # If that worked, we are all done. Save fit_bothAR1 and make note of the model settings
       if(class(fit_bothAR1) == "fit_model" && max(abs(fit_bothAR1$parameter_estimates$diagnostics$final_gradient)) <= 0.01){
         # Append progress file
         progress_new<- "Excellent, model with AR1 structure on both beta and spatio-temporal variation converged"
-        write(progress_new, file = paste(outfile, "/", "progress.txt", sep = ""), append = TRUE)
+        write(progress_new, file = paste(outfile, "_progress.txt", sep = ""), append = TRUE)
         fit_bothAR1$parameter_estimates$fitted_settings <- "BothAR1"
-        saveRDS(fit_bothAR1, file = paste(outfile, "/", "bothAR1_modelfit.rds", sep = ""))
+        saveRDS(fit_bothAR1, file = paste(outfile, "_bothAR1_modelfit.rds", sep = ""))
       } 
       
       # If that didn't work, next option is to try a RW model for spatio-temporal variation...
       if(class(fit_bothAR1) == "try-error" || (!class(fit_bothAR1) == "try-error" & max(abs(fit_bothAR1$parameter_estimates$diagnostics$final_gradient)) > 0.01)){
         # Append progress file
         progress_new<- "Unable to fit model with AR1 on spatio-temporal variation, trying RW instead"
-        write(progress_new, file = paste(outfile, "/", "progress.txt", sep = ""), append = TRUE)
+        write(progress_new, file = paste(outfile, "_progress.txt", sep = ""), append = TRUE)
         
         # Adjusting settings
         rhoconfig_betaAR1stRW<- c("Beta1" = 4, "Beta2" = 4, "Epsilon1" = 2, "Epsilon2" = 2)
@@ -292,24 +310,24 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
                                             # Spatial info
                                             observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
                                             # Model info
-                                            "Lat_i" = samp_dat_all[,'Lat'], "Lon_i" = samp_dat_all[,'Lon'], "t_i" = as.vector(samp_dat_all[,'Year']), "b_i" = samp_dat_base[,'Catch_KG'], "c_iz" = rep(0, nrow(samp_dat_all)), "v_i" = rep(0, nrow(samp_dat_all)), "Q_ik" = NULL, "a_i" = rep(area_swept, nrow(samp_dat_all)), covariate_data = cov_dat_all, X1_formula = formula_use, X2_formula = formula_use, "PredTF_i" = samp_dat_all[,'PRED_TF'], "working_dir" = paste(outfile, "/", sep = ""), "CompileDir" = outfolder, "run_model" = TRUE, "test_fit" = FALSE, "getReportCovariance" = FALSE, "getJointPrecision" = TRUE, Use_REML = TRUE), silent = TRUE)
+                                            "Lat_i" = samp_dat_all[,'Lat'], "Lon_i" = samp_dat_all[,'Lon'], "t_i" = as.vector(samp_dat_all[,'Year']), "b_i" = samp_dat_base[,'Catch_KG'], "c_iz" = rep(0, nrow(samp_dat_all)), "v_i" = rep(0, nrow(samp_dat_all)), "Q_ik" = NULL, "a_i" = rep(area_swept, nrow(samp_dat_all)), covariate_data = cov_dat_all, X1_formula = formula_use, X2_formula = formula_use, "PredTF_i" = samp_dat_all[,'PRED_TF'], "working_dir" = outfolder, "CompileDir" = here::here(), "run_model" = TRUE, "test_fit" = FALSE, "getReportCovariance" = FALSE, "getJointPrecision" = TRUE, Use_REML = TRUE), silent = TRUE)
         
         # Alright, after running that (even if it failed) we are at the end of this subset. If it worked, we save the betaAR1stRW. 
         if(class(fit_betaAR1stRW) == "fit_model" && max(abs(fit_betaAR1stRW$parameter_estimates$diagnostics$final_gradient)) <= 0.01){
           # Append progress file
           progress_new<- "Excellent, model with AR1 on beta and RW on spatio-temporal variability converged"
-          write(progress_new, file = paste(outfile, "/", "progress.txt", sep = ""), append = TRUE)
+          write(progress_new, file = paste(outfile, "_progress.txt", sep = ""), append = TRUE)
           fit_betaAR1stRW$parameter_estimates$fitted_settings <- "BetaAR1stRW"
-          saveRDS(fit_betaAR1stRW, file = paste(outfile, "/", "betaAR1stRW_modelfit.rds", sep = "")) 
+          saveRDS(fit_betaAR1stRW, file = paste(outfile, "_betaAR1stRW_modelfit.rds", sep = "")) 
         }
         
         # If not, we go back and save the one with just temporal structure on beta
         if(class(fit_betaAR1stRW) == "try-error" || (!class(fit_betaAR1stRW) == "try-error" & max(abs(fit_betaAR1stRW$parameter_estimates$diagnostics$final_gradient)) > 0.01)){
           # Append progress file
           progress_new<- "Despite trying to add temporal structure to spatio-temporal variability, none of the models (AR1 or RW converged), so just using model with temporal structure on beta"
-          write(progress_new, file = paste(outfile, "/", "progress.txt", sep = ""), append = TRUE)
+          write(progress_new, file = paste(outfile, "_progress.txt", sep = ""), append = TRUE)
           fit_betaAR1$parameter_estimates$fitted_settings <- "BetaAR1"
-          saveRDS(fit_betaAR1, file = paste(outfile, "/", "betaAR1_modelfit.rds", sep = ""))
+          saveRDS(fit_betaAR1, file = paste(outfile, "_betaAR1_modelfit.rds", sep = ""))
         } 
       }
       # End trying AR1 options for beta
@@ -319,7 +337,7 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
     if(class(fit_betaAR1) == "try-error" || (!class(fit_betaAR1) == "try-error" & max(abs(fit_betaAR1$parameter_estimates$diagnostics$final_gradient)) > 0.01)) {
       # Append progress file
       progress_new<- "Unable to fit AR1 to beta, trying simpler RW instead"
-      write(progress_new, file = paste(outfile, "/", "progress.txt", sep = ""), append = TRUE)
+      write(progress_new, file = paste(outfile, "_progress.txt", sep = ""), append = TRUE)
       
       # Try RW
       rhoconfig_betaRW<- c("Beta1" = 2, "Beta2" = 2, "Epsilon1" = 1, "Epsilon2" = 1)
@@ -330,23 +348,23 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
                                      # Spatial info
                                      observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
                                      # Model info
-                                     "Lat_i" = samp_dat_all[,'Lat'], "Lon_i" = samp_dat_all[,'Lon'], "t_i" = as.vector(samp_dat_all[,'Year']), "b_i" = samp_dat_base[,'Catch_KG'], "c_iz" = rep(0, nrow(samp_dat_all)), "v_i" = rep(0, nrow(samp_dat_all)), "Q_ik" = NULL, "a_i" = rep(area_swept, nrow(samp_dat_all)), covariate_data = cov_dat_all, X1_formula = formula_use, X2_formula = formula_use, "PredTF_i" = samp_dat_all[,'PRED_TF'], "working_dir" = paste(outfile, "/", sep = ""), "CompileDir" = outfolder, "run_model" = TRUE, "test_fit" = FALSE, "getReportCovariance" = FALSE, "getJointPrecision" = TRUE, Use_REML = TRUE), silent = TRUE)
+                                     "Lat_i" = samp_dat_all[,'Lat'], "Lon_i" = samp_dat_all[,'Lon'], "t_i" = as.vector(samp_dat_all[,'Year']), "b_i" = samp_dat_base[,'Catch_KG'], "c_iz" = rep(0, nrow(samp_dat_all)), "v_i" = rep(0, nrow(samp_dat_all)), "Q_ik" = NULL, "a_i" = rep(area_swept, nrow(samp_dat_all)), covariate_data = cov_dat_all, X1_formula = formula_use, X2_formula = formula_use, "PredTF_i" = samp_dat_all[,'PRED_TF'], "working_dir" = outfolder, "CompileDir" = here::here(), "run_model" = TRUE, "test_fit" = FALSE, "getReportCovariance" = FALSE, "getJointPrecision" = TRUE, Use_REML = TRUE), silent = TRUE)
       
       if(class(fit_betaRW) == "fit_model" && (max(abs(fit_betaRW$parameter_estimates$diagnostics$final_gradient)) <= 0.01)){
         # Append progress file
         progress_new<- "Excellent, model with RW on beta worked"
-        write(progress_new, file = paste(outfile, "/", "progress.txt", sep = ""), append = TRUE)
+        write(progress_new, file = paste(outfile, "_progress.txt", sep = ""), append = TRUE)
         fit_betaRW$parameter_estimates$fitted_settings <- "BetaRW"
-        saveRDS(fit_betaRW, file = paste(outfile, "/", "betaRW_modelfit.rds", sep = ""))
+        saveRDS(fit_betaRW, file = paste(outfile, "_betaRW_modelfit.rds", sep = ""))
       }
       
       if(class(fit_betaRW) == "try-error" || (!class(fit_betaRW) == "try-error" & max(abs(fit_betaRW$parameter_estimates$diagnostics$final_gradient)) > 0.01)) {
         # If that did not work, then we are dealing with the basic model with spatial, spatio-temporal variability and no temporal correlation on intercept or spatio-temporal variability
         # Append progress file
         progress_new<- "Unable to fit a model with temporal structure on beta, so just going to use the basic forecast model without temporal structure on beta or spatio-temporal variability"
-        write(progress_new, file = paste(outfile, "/", "progress.txt", sep = ""), append = TRUE)
+        write(progress_new, file = paste(outfile, "_progress.txt", sep = ""), append = TRUE)
         fit_base$parameter_estimates$fitted_settings <- "Base"
-        saveRDS(fit_base, file = paste(outfile, "/", "base_modelfit.rds", sep = ""))
+        saveRDS(fit_base, file = paste(outfile, "_base_modelfit.rds", sep = ""))
       }
       # End trying RW on beta
     }
@@ -357,7 +375,7 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
   if(class(fit_base) == "try-error" || (!class(fit_base) == "try-error" & max(abs(fit_base$parameter_estimates$diagnostics$final_gradient)) > 0.01)){
     # Append progress file
     progress_new<- "Convergence issues with just the basic forecast model, trying now to turn on/off spatial or spatio-temporal variability as needed"
-    write(progress_new, file = paste(outfile, "/", "progress.txt", sep = ""), append = TRUE)
+    write(progress_new, file = paste(outfile, "_progress.txt", sep = ""), append = TRUE)
     
     # We were unable to even fit the base forecasting model. This (most likely) means either a problem with estimating the spatial or the spatio-temporal variability. 
     
@@ -372,22 +390,22 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
                                  # Spatial info
                                  observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
                                  # Model info
-                                 "Lat_i" = samp_dat_all[,'Lat'], "Lon_i" = samp_dat_all[,'Lon'], "t_i" = as.vector(samp_dat_all[,'Year']), "b_i" = samp_dat_base[,'Catch_KG'], "c_iz" = rep(0, nrow(samp_dat_all)), "v_i" = rep(0, nrow(samp_dat_all)), "Q_ik" = NULL, "a_i" = rep(area_swept, nrow(samp_dat_all)), covariate_data = cov_dat_all, X1_formula = formula_use, X2_formula = formula_use, "PredTF_i" = samp_dat_all[,'PRED_TF'], "working_dir" = paste(outfile, "/", sep = ""), "CompileDir" = outfolder, "run_model" = TRUE, "test_fit" = FALSE, "getReportCovariance" = FALSE, "getJointPrecision" = TRUE, Use_REML = TRUE), silent = TRUE)
+                                 "Lat_i" = samp_dat_all[,'Lat'], "Lon_i" = samp_dat_all[,'Lon'], "t_i" = as.vector(samp_dat_all[,'Year']), "b_i" = samp_dat_base[,'Catch_KG'], "c_iz" = rep(0, nrow(samp_dat_all)), "v_i" = rep(0, nrow(samp_dat_all)), "Q_ik" = NULL, "a_i" = rep(area_swept, nrow(samp_dat_all)), covariate_data = cov_dat_all, X1_formula = formula_use, X2_formula = formula_use, "PredTF_i" = samp_dat_all[,'PRED_TF'], "working_dir" = outfolder, "CompileDir" = here::here(), "run_model" = TRUE, "test_fit" = FALSE, "getReportCovariance" = FALSE, "getJointPrecision" = TRUE, Use_REML = TRUE), silent = TRUE)
     
     # If that worked, save result
     if(class(fit_nost) == "fit_model" && (max(abs(fit_nost$parameter_estimates$diagnostics$final_gradient)) <= 0.01)){
       # Append progress file
       progress_new<- "Model with just spatial variability converged"
-      write(progress_new, file = paste(outfile, "/", "progress.txt", sep = ""), append = TRUE)
+      write(progress_new, file = paste(outfile, "_progress.txt", sep = ""), append = TRUE)
       fit_nost$parameter_estimates$fitted_settings <- "Nost"
-      saveRDS(fit_nost, file = paste(outfile, "/", "nost_modelfit.rds", sep = ""))
+      saveRDS(fit_nost, file = paste(outfile, "_nost_modelfit.rds", sep = ""))
     } 
     
     # If it didn't, try turning off spatial variability
     if(class(fit_nost) == "try-error" || (!class(fit_nost) == "try-error" & max(abs(fit_nost$parameter_estimates$diagnostics$final_gradient)) > 0.01)){
       # Append progress file
       progress_new<- "Turning off spatio-temporal variability did not solve the convergence issues, now trying model with spatio-temporal and without spatial"
-      write(progress_new, file = paste(outfile, "/", "progress.txt", sep = ""), append = TRUE)
+      write(progress_new, file = paste(outfile, "_progress.txt", sep = ""), append = TRUE)
       
       # Turn off spatial variability
       fieldconfig_nosp<- c("Omega1" = 0, "Epsilon1" = 1, "Omega2" = 0, "Epsilon2" = 1)
@@ -400,22 +418,22 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
                                    # Spatial info
                                    observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
                                    # Model info
-                                   "Lat_i" = samp_dat_all[,'Lat'], "Lon_i" = samp_dat_all[,'Lon'], "t_i" = as.vector(samp_dat_all[,'Year']), "b_i" = samp_dat_base[,'Catch_KG'], "c_iz" = rep(0, nrow(samp_dat_all)), "v_i" = rep(0, nrow(samp_dat_all)), "Q_ik" = NULL, "a_i" = rep(area_swept, nrow(samp_dat_all)), covariate_data = cov_dat_all, X1_formula = formula_use, X2_formula = formula_use, "PredTF_i" = samp_dat_all[,'PRED_TF'], "working_dir" = paste(outfile, "/", sep = ""), "CompileDir" = outfolder, "run_model" = TRUE, "test_fit" = FALSE, "getReportCovariance" = FALSE, "getJointPrecision" = TRUE, Use_REML = TRUE), silent = TRUE)
+                                   "Lat_i" = samp_dat_all[,'Lat'], "Lon_i" = samp_dat_all[,'Lon'], "t_i" = as.vector(samp_dat_all[,'Year']), "b_i" = samp_dat_base[,'Catch_KG'], "c_iz" = rep(0, nrow(samp_dat_all)), "v_i" = rep(0, nrow(samp_dat_all)), "Q_ik" = NULL, "a_i" = rep(area_swept, nrow(samp_dat_all)), covariate_data = cov_dat_all, X1_formula = formula_use, X2_formula = formula_use, "PredTF_i" = samp_dat_all[,'PRED_TF'], "working_dir" = outfolder, "CompileDir" = here::here(), "run_model" = TRUE, "test_fit" = FALSE, "getReportCovariance" = FALSE, "getJointPrecision" = TRUE, Use_REML = TRUE), silent = TRUE)
       
       # If that worked, all done...
       if(class(fit_nosp) == "fit_model" && (max(abs(fit_nosp$parameter_estimates$diagnostics$final_gradient)) <= 0.01)){
         # Append progress file
         progress_new<- "Model without spatial variability converged"
-        write(progress_new, file = paste(outfile, "/", "progress.txt", sep = ""), append = TRUE)
+        write(progress_new, file = paste(outfile, "_progress.txt", sep = ""), append = TRUE)
         fit_nosp$parameter_estimates$fitted_settings <- "Nosp"
-        saveRDS(fit_nosp, file = paste(outfile, "/", "nosp_modelfit.rds", sep = ""))
+        saveRDS(fit_nosp, file = paste(outfile, "_nosp_modelfit.rds", sep = ""))
       } 
       
       # If not...turn everything off
       if(class(fit_nosp) == "try-error" || (!class(fit_nosp) == "try-error" & max(abs(fit_nosp$parameter_estimates$diagnostics$final_gradient)) > 0.01)){
         # Append progress file
         progress_new<- "Model still not converging, going to have to turn off both spatial and spatio-temporal variability"
-        write(progress_new, file = paste(outfile, "/", "progress.txt", sep = ""), append = TRUE)
+        write(progress_new, file = paste(outfile, "_progress.txt", sep = ""), append = TRUE)
         
         # Turn off spatial variability
         fieldconfig_simp<- c("Omega1" = 0, "Epsilon1" = 0, "Omega2" = 0, "Epsilon2" = 0)
@@ -428,21 +446,21 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
                                      # Spatial info
                                      observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
                                      # Model info
-                                     "Lat_i" = samp_dat_all[,'Lat'], "Lon_i" = samp_dat_all[,'Lon'], "t_i" = as.vector(samp_dat_all[,'Year']), "b_i" = samp_dat_base[,'Catch_KG'], "c_iz" = rep(0, nrow(samp_dat_all)), "v_i" = rep(0, nrow(samp_dat_all)), "Q_ik" = NULL, "a_i" = rep(area_swept, nrow(samp_dat_all)), covariate_data = cov_dat_all, X1_formula = formula_use, X2_formula = formula_use, "PredTF_i" = samp_dat_all[,'PRED_TF'], "working_dir" = paste(outfile, "/", sep = ""), "CompileDir" = outfolder, "run_model" = TRUE, "test_fit" = FALSE, "getReportCovariance" = FALSE, "getJointPrecision" = TRUE, Use_REML = TRUE), silent = TRUE)
+                                     "Lat_i" = samp_dat_all[,'Lat'], "Lon_i" = samp_dat_all[,'Lon'], "t_i" = as.vector(samp_dat_all[,'Year']), "b_i" = samp_dat_base[,'Catch_KG'], "c_iz" = rep(0, nrow(samp_dat_all)), "v_i" = rep(0, nrow(samp_dat_all)), "Q_ik" = NULL, "a_i" = rep(area_swept, nrow(samp_dat_all)), covariate_data = cov_dat_all, X1_formula = formula_use, X2_formula = formula_use, "PredTF_i" = samp_dat_all[,'PRED_TF'], "working_dir" = outfolder, "CompileDir" = here::here(), "run_model" = TRUE, "test_fit" = FALSE, "getReportCovariance" = FALSE, "getJointPrecision" = TRUE, Use_REML = TRUE), silent = TRUE)
         
         # Did that work?
         if(class(fit_simp) == "try-error" || (!class(fit_simp) == "try-error" & max(abs(fit_simp$parameter_estimates$diagnostics$final_gradient)) > 0.01)){
           # Append progress file noting failure
           progress_new<- "Simple model did not converge"
-          write(progress_new, file = paste(outfile, "/", "progress.txt", sep = ""), append = TRUE)
+          write(progress_new, file = paste(outfile, "_progress.txt", sep = ""), append = TRUE)
         }
         
         if(class(fit_simp) == "fit_model" && (max(abs(fit_simp$parameter_estimates$diagnostics$final_gradient)) <= 0.01)){
           # Append progress file
           progress_new<- "Simple model converged"
-          write(progress_new, file = paste(outfile, "/", "progress.txt", sep = ""), append = TRUE)
+          write(progress_new, file = paste(outfile, "_progress.txt", sep = ""), append = TRUE)
           fit_simp$parameter_estimates$fitted_settings <- "Simp"
-          saveRDS(fit_simp, file = paste(outfile, "/", "simp_modelfit.rds", sep = ""))
+          saveRDS(fit_simp, file = paste(outfile, "_simp_modelfit.rds", sep = ""))
         }
       }
     }
@@ -450,7 +468,7 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
   }
   # End for each loop over species, seasons, fore_challenge
 }
-
+print(Sys.time())
 
 
 # Model fitting INTRA ANNUAL  --------------------------------------------------------------
@@ -660,4 +678,3 @@ fit.intra<- fit_model("settings" = settings.use, "Map" = Map, strata.limits = st
 
 # Run
 fit.intra<- fit_model("settings" = settings.use, "Map" = Map, strata.limits = strat.limits, "Lat_i" = samp.dat[,'Lat'], "Lon_i" = samp.dat[,'Lon'], "t_i" = as.numeric(samp.dat[,"Season_Year"])-1, "b_i" = samp.dat[,'Catch_KG'], "c_iz" = rep(0, nrow(samp.dat)), "v_i" = rep(0, nrow(samp.dat)), "Q_ik" = NULL, "a_i" = rep(area.swept, nrow(samp.dat)), "PredTF_i" = samp.dat[,'PRED_TF'], covariate_data = cov.dat, formula = formula.use, "observations_LL" = cbind("Lat" = samp.dat[,'Lat'], "Lon" = samp.dat[, 'Lon']), "maximum_distance_from_sample" = maximum.dist.from.sample, "grid_dim_km" = grid.dim.km, "working_dir" = OutFile, "Use_REML" = Use_REML, "X_itp" = X.itp, "X_gtp" = X.gtp, "Xconfig_zcp" = Xconfig.zcp, "test_fit" = FALSE, "run_model" = TRUE)
-  
