@@ -175,7 +175,10 @@ vast_files<- c(paste(here::here(), "VAST_v12_0_0.cpp", sep = "/"), paste(here::h
 # Seemed really slow...
 #all<- dat_nest
 all<- dat_nest
+dat_nest<- all %>%
+  filter(., fore_challenge >= 2017)
 
+start_time<- Sys.time()
 foreach(i = 1:nrow(dat_nest)) %dopar% {
   
   library(VAST)
@@ -468,7 +471,7 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
   }
   # End for each loop over species, seasons, fore_challenge
 }
-print(Sys.time())
+elapsed_time<- Sys.time() - start_time
 
 
 # Model fitting INTRA ANNUAL  --------------------------------------------------------------
