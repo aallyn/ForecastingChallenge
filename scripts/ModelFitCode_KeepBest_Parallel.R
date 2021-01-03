@@ -110,7 +110,7 @@ obsmodel_use<- c("PosDist" = 4, "EncProbForm" = 1)
 # Options -- want SD_observation_density
 options_use<- c("SD_site_logdensity" = FALSE, "Calculate_Range" = FALSE, "Calculate_effective_area" = FALSE, "Calculate_Cov_SE" = FALSE, "Calculate_Synchrony" = FALSE, "Calculate_proportion" = FALSE, "SD_observation_density" = TRUE)
 
-settings_forebase<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_forebase, RhoConfig = rhoconfig_forebase, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = TRUE)
+settings_forebase<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_forebase, RhoConfig = rhoconfig_forebase, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = FALSE)
 
 ### Model formula/fit stuff
 formula_use<- ~ splines::bs(AVGDEPTH, knots = NULL, intercept = FALSE) +
@@ -175,12 +175,12 @@ vast_files<- c(paste(here::here(), "VAST_v12_0_0.cpp", sep = "/"), paste(here::h
 # Seemed really slow...
 #all<- dat_nest
 all<- dat_nest
-less<- c(1, 2, 15, 16, 31, 32)
-dat_nest<- all[-c(1, 2, 15, 16, 31, 32),]
+dat_nest<- all[-c(1, 2, 3, 4, 5, 6, 15, 16, 17, 18, 31, 32),]
+dat_nest<- dat_nest[17:20,]
+dat_nest<- all[c(12:13, 22, 27:30),]
 cores_avail<- detectCores()
-library(doFuture)
 registerDoFuture()
-plan(multisession, workers = 1)
+plan(multisession, workers = cores_avail-2)
 start_time<- Sys.time()
 foreach(i = 1:nrow(dat_nest)) %dopar% {
   
@@ -264,7 +264,7 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
     # Basic forecast model worked, add on complexity...
     # Try adding on autoregressive structure to the intercept and remake settings
     rhoconfig_betaAR1<- c("Beta1" = 4, "Beta2" = 4, "Epsilon1" = 1, "Epsilon2" = 1)
-    settings_betaAR1<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_forebase, RhoConfig = rhoconfig_betaAR1, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = TRUE)
+    settings_betaAR1<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_forebase, RhoConfig = rhoconfig_betaAR1, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = FALSE)
     
     # Refit the model
     fit_betaAR1<- try(fit_model_eff("settings" = settings_betaAR1,
@@ -281,7 +281,7 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
       write(progress_new, file = paste(outfile, "_progress.txt", sep = ""), append = TRUE)
       
       rhoconfig_bothAR1<- c("Beta1" = 4, "Beta2" = 4, "Epsilon1" = 4, "Epsilon2" = 4)
-      settings_bothR1<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_forebase, RhoConfig = rhoconfig_bothAR1, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = TRUE)
+      settings_bothR1<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_forebase, RhoConfig = rhoconfig_bothAR1, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = FALSE)
       
       # Refit the model
       fit_bothAR1<- try(fit_model_eff("settings" = settings_bothAR1,
@@ -293,6 +293,17 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
       
       # If that worked, we are all done. Save fit_bothAR1 and make note of the model settings
       if(class(fit_bothAR1) == "fit_model" && max(abs(fit_bothAR1$parameter_estimates$diagnostics$final_gradient)) <= 0.01){
+        # Refit with bias correction
+        settings_bothR1_final<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_forebase, RhoConfig = rhoconfig_bothAR1, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = TRUE)
+        
+        # Refit the model
+        fit_bothAR1<- try(fit_model_eff("settings" = settings_bothAR1_final,
+                                        #bias.correct.control = list(nsplit = 5),
+                                        # Spatial info
+                                        observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
+                                        # Model info
+                                        "Lat_i" = samp_dat_all[,'Lat'], "Lon_i" = samp_dat_all[,'Lon'], "t_i" = as.vector(samp_dat_all[,'Year']), "b_i" = samp_dat_base[,'Catch_KG'], "c_iz" = rep(0, nrow(samp_dat_all)), "v_i" = rep(0, nrow(samp_dat_all)), "Q_ik" = NULL, "a_i" = rep(area_swept, nrow(samp_dat_all)), covariate_data = cov_dat_all, X1_formula = formula_use, X2_formula = formula_use, parameters = fit_bothAR1$ParHat, "PredTF_i" = samp_dat_all[,'PRED_TF'], "working_dir" = outfolder, "CompileDir" = here::here(), "run_model" = TRUE, "test_fit" = FALSE, "getReportCovariance" = FALSE, "getJointPrecision" = TRUE, Use_REML = TRUE), silent = TRUE)
+        
         # Append progress file
         progress_new<- "Excellent, model with AR1 structure on both beta and spatio-temporal variation converged"
         write(progress_new, file = paste(outfile, "_progress.txt", sep = ""), append = TRUE)
@@ -308,7 +319,7 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
         
         # Adjusting settings
         rhoconfig_betaAR1stRW<- c("Beta1" = 4, "Beta2" = 4, "Epsilon1" = 2, "Epsilon2" = 2)
-        settings_betaAR1stRW<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_forebase, RhoConfig = rhoconfig_betaAR1stRW, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = TRUE)
+        settings_betaAR1stRW<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_forebase, RhoConfig = rhoconfig_betaAR1stRW, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = FALSE)
         
         # Refit the model
         fit_betaAR1stRW<- try(fit_model_eff("settings" = settings_betaAR1stRW,
@@ -320,6 +331,17 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
         
         # Alright, after running that (even if it failed) we are at the end of this subset. If it worked, we save the betaAR1stRW. 
         if(class(fit_betaAR1stRW) == "fit_model" && max(abs(fit_betaAR1stRW$parameter_estimates$diagnostics$final_gradient)) <= 0.01){
+          # Re-run, with bias correction
+          # Adjusting settings
+          settings_betaAR1stRW_final<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_forebase, RhoConfig = rhoconfig_betaAR1stRW, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = TRUE)
+          
+          # Refit the model
+          fit_betaAR1stRW<- try(fit_model_eff("settings" = settings_betaAR1stRW_final,
+                                              #bias.correct.control = list(nsplit = 5),
+                                              # Spatial info
+                                              observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
+                                              # Model info
+                                              "Lat_i" = samp_dat_all[,'Lat'], "Lon_i" = samp_dat_all[,'Lon'], "t_i" = as.vector(samp_dat_all[,'Year']), "b_i" = samp_dat_base[,'Catch_KG'], "c_iz" = rep(0, nrow(samp_dat_all)), "v_i" = rep(0, nrow(samp_dat_all)), "Q_ik" = NULL, "a_i" = rep(area_swept, nrow(samp_dat_all)), covariate_data = cov_dat_all, X1_formula = formula_use, X2_formula = formula_use, parameters = fit_betaAR1stRW$ParHat, "PredTF_i" = samp_dat_all[,'PRED_TF'], "working_dir" = outfolder, "CompileDir" = here::here(), "run_model" = TRUE, "test_fit" = FALSE, "getReportCovariance" = FALSE, "getJointPrecision" = TRUE, Use_REML = TRUE), silent = TRUE)
           # Append progress file
           progress_new<- "Excellent, model with AR1 on beta and RW on spatio-temporal variability converged"
           write(progress_new, file = paste(outfile, "_progress.txt", sep = ""), append = TRUE)
@@ -329,6 +351,17 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
         
         # If not, we go back and save the one with just temporal structure on beta
         if(class(fit_betaAR1stRW) == "try-error" || (!class(fit_betaAR1stRW) == "try-error" & max(abs(fit_betaAR1stRW$parameter_estimates$diagnostics$final_gradient)) > 0.01)){
+          # Re fit with bias correction on
+          settings_betaAR1_final<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_forebase, RhoConfig = rhoconfig_betaAR1, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = TRUE)
+          
+          # Refit the model
+          fit_betaAR1<- try(fit_model_eff("settings" = settings_betaAR1_final,
+                                          #bias.correct.control = list(nsplit = 5),
+                                          # Spatial info
+                                          observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
+                                          # Model info
+                                          "Lat_i" = samp_dat_all[,'Lat'], "Lon_i" = samp_dat_all[,'Lon'], "t_i" = as.vector(samp_dat_all[,'Year']), "b_i" = samp_dat_base[,'Catch_KG'], "c_iz" = rep(0, nrow(samp_dat_all)), "v_i" = rep(0, nrow(samp_dat_all)), "Q_ik" = NULL, "a_i" = rep(area_swept, nrow(samp_dat_all)), covariate_data = cov_dat_all, X1_formula = formula_use, X2_formula = formula_use, parameters = fit_betaAR1$ParHat, "PredTF_i" = samp_dat_all[,'PRED_TF'], "working_dir" = outfolder, "CompileDir" = here::here(), "run_model" = TRUE, "test_fit" = FALSE, "getReportCovariance" = FALSE, "getJointPrecision" = TRUE, Use_REML = TRUE), silent = TRUE)
+          
           # Append progress file
           progress_new<- "Despite trying to add temporal structure to spatio-temporal variability, none of the models (AR1 or RW converged), so just using model with temporal structure on beta"
           write(progress_new, file = paste(outfile, "_progress.txt", sep = ""), append = TRUE)
@@ -347,7 +380,7 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
       
       # Try RW
       rhoconfig_betaRW<- c("Beta1" = 2, "Beta2" = 2, "Epsilon1" = 1, "Epsilon2" = 1)
-      settings_betaRW<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_forebase, RhoConfig = rhoconfig_betaRW, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = TRUE)
+      settings_betaRW<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_forebase, RhoConfig = rhoconfig_betaRW, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = FALSE)
       
       # Refit the model
       fit_betaRW<- try(fit_model_eff("settings" = settings_betaRW, 
@@ -358,6 +391,17 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
                                      "Lat_i" = samp_dat_all[,'Lat'], "Lon_i" = samp_dat_all[,'Lon'], "t_i" = as.vector(samp_dat_all[,'Year']), "b_i" = samp_dat_base[,'Catch_KG'], "c_iz" = rep(0, nrow(samp_dat_all)), "v_i" = rep(0, nrow(samp_dat_all)), "Q_ik" = NULL, "a_i" = rep(area_swept, nrow(samp_dat_all)), covariate_data = cov_dat_all, X1_formula = formula_use, X2_formula = formula_use, "PredTF_i" = samp_dat_all[,'PRED_TF'], "working_dir" = outfolder, "CompileDir" = here::here(), "run_model" = TRUE, "test_fit" = FALSE, "getReportCovariance" = FALSE, "getJointPrecision" = TRUE, Use_REML = TRUE), silent = TRUE)
       
       if(class(fit_betaRW) == "fit_model" && (max(abs(fit_betaRW$parameter_estimates$diagnostics$final_gradient)) <= 0.01)){
+        # Refit with bias correction
+        settings_betaRW_final<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_forebase, RhoConfig = rhoconfig_betaRW, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = TRUE)
+        
+        # Refit the model
+        fit_betaRW<- try(fit_model_eff("settings" = settings_betaRW_final, 
+                                       #bias.correct.control = list(nsplit = 5),
+                                       # Spatial info
+                                       observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
+                                       # Model info
+                                       "Lat_i" = samp_dat_all[,'Lat'], "Lon_i" = samp_dat_all[,'Lon'], "t_i" = as.vector(samp_dat_all[,'Year']), "b_i" = samp_dat_base[,'Catch_KG'], "c_iz" = rep(0, nrow(samp_dat_all)), "v_i" = rep(0, nrow(samp_dat_all)), "Q_ik" = NULL, "a_i" = rep(area_swept, nrow(samp_dat_all)), covariate_data = cov_dat_all, X1_formula = formula_use, X2_formula = formula_use, parameters = fit_betaRW$ParHat, "PredTF_i" = samp_dat_all[,'PRED_TF'], "working_dir" = outfolder, "CompileDir" = here::here(), "run_model" = TRUE, "test_fit" = FALSE, "getReportCovariance" = FALSE, "getJointPrecision" = TRUE, Use_REML = TRUE), silent = TRUE)
+        
         # Append progress file
         progress_new<- "Excellent, model with RW on beta worked"
         write(progress_new, file = paste(outfile, "_progress.txt", sep = ""), append = TRUE)
@@ -367,6 +411,16 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
       
       if(class(fit_betaRW) == "try-error" || (!class(fit_betaRW) == "try-error" & max(abs(fit_betaRW$parameter_estimates$diagnostics$final_gradient)) > 0.01)) {
         # If that did not work, then we are dealing with the basic model with spatial, spatio-temporal variability and no temporal correlation on intercept or spatio-temporal variability
+        # Refit wiith bias correction
+        settings_forebase_final<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_forebase, RhoConfig = rhoconfig_forebase, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = TRUE)
+        
+        # Model fit wrapper function
+        fit_base<- try(fit_model_eff("settings" = settings_forebase_final,
+                                     #bias.correct.control = list(nsplit = 5),
+                                     # Spatial info
+                                     observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
+                                     # Model info
+                                     "Lat_i" = samp_dat_all[,'Lat'], "Lon_i" = samp_dat_all[,'Lon'], "t_i" = as.vector(samp_dat_all[,'Year']), "b_i" = samp_dat_base[,'Catch_KG'], "c_iz" = rep(0, nrow(samp_dat_all)), "v_i" = rep(0, nrow(samp_dat_all)), "Q_ik" = NULL, "a_i" = rep(area_swept, nrow(samp_dat_all)), covariate_data = cov_dat_all, X1_formula = formula_use, X2_formula = formula_use, parameters = fit_base$ParHat,"PredTF_i" = samp_dat_all[,'PRED_TF'], "working_dir" = outfolder, "CompileDir" = here::here(), "run_model" = TRUE, "test_fit" = FALSE, "getReportCovariance" = FALSE, "getJointPrecision" = TRUE, Use_REML = TRUE), silent = TRUE)
         # Append progress file
         progress_new<- "Unable to fit a model with temporal structure on beta, so just going to use the basic forecast model without temporal structure on beta or spatio-temporal variability"
         write(progress_new, file = paste(outfile, "_progress.txt", sep = ""), append = TRUE)
@@ -390,7 +444,7 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
     fieldconfig_nost<- c("Omega1" = 1, "Epsilon1" = 0, "Omega2" = 1, "Epsilon2" = 0)
     rhoconfig_nost<- c("Beta1" = 1, "Beta2" = 1, "Epsilon1" = 0, "Epsilon2" = 0)
     
-    settings_nost<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_nost, RhoConfig = rhoconfig_nost, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = TRUE)
+    settings_nost<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_nost, RhoConfig = rhoconfig_nost, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = FALSE)
     
     # Model fit wrapper function
     fit_nost<- try(fit_model_eff("settings" = settings_nost,
@@ -402,6 +456,16 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
     
     # If that worked, save result
     if(class(fit_nost) == "fit_model" && (max(abs(fit_nost$parameter_estimates$diagnostics$final_gradient)) <= 0.01)){
+      # Refit with bias correction
+      settings_nost_final<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_nost, RhoConfig = rhoconfig_nost, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = TRUE)
+      
+      # Model fit wrapper function
+      fit_nost<- try(fit_model_eff("settings" = settings_nost_final,
+                                   #bias.correct.control = list(nsplit = 5),
+                                   # Spatial info
+                                   observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
+                                   # Model info
+                                   "Lat_i" = samp_dat_all[,'Lat'], "Lon_i" = samp_dat_all[,'Lon'], "t_i" = as.vector(samp_dat_all[,'Year']), "b_i" = samp_dat_base[,'Catch_KG'], "c_iz" = rep(0, nrow(samp_dat_all)), "v_i" = rep(0, nrow(samp_dat_all)), "Q_ik" = NULL, "a_i" = rep(area_swept, nrow(samp_dat_all)), covariate_data = cov_dat_all, X1_formula = formula_use, X2_formula = formula_use, parameters = fit_nost$ParHat, "PredTF_i" = samp_dat_all[,'PRED_TF'], "working_dir" = outfolder, "CompileDir" = here::here(), "run_model" = TRUE, "test_fit" = FALSE, "getReportCovariance" = FALSE, "getJointPrecision" = TRUE, Use_REML = TRUE), silent = TRUE)
       # Append progress file
       progress_new<- "Model with just spatial variability converged"
       write(progress_new, file = paste(outfile, "_progress.txt", sep = ""), append = TRUE)
@@ -419,7 +483,7 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
       fieldconfig_nosp<- c("Omega1" = 0, "Epsilon1" = 1, "Omega2" = 0, "Epsilon2" = 1)
       rhoconfig_nosp<- c("Beta1" = 1, "Beta2" = 1, "Epsilon1" = 1, "Epsilon2" = 1)
       
-      settings_nosp<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_nosp, RhoConfig = rhoconfig_nosp, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = TRUE)
+      settings_nosp<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_nosp, RhoConfig = rhoconfig_nosp, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = FALSE)
       
       # Model fit wrapper function
       fit_nosp<- try(fit_model_eff("settings" = settings_nosp,
@@ -431,6 +495,17 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
       
       # If that worked, all done...
       if(class(fit_nosp) == "fit_model" && (max(abs(fit_nosp$parameter_estimates$diagnostics$final_gradient)) <= 0.01)){
+        # Refit with bias correction
+        settings_nosp_final<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_nosp, RhoConfig = rhoconfig_nosp, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = TRUE)
+        
+        # Model fit wrapper function
+        fit_nosp<- try(fit_model_eff("settings" = settings_nosp_final,
+                                     #bias.correct.control = list(nsplit = 5),
+                                     # Spatial info
+                                     observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
+                                     # Model info
+                                     "Lat_i" = samp_dat_all[,'Lat'], "Lon_i" = samp_dat_all[,'Lon'], "t_i" = as.vector(samp_dat_all[,'Year']), "b_i" = samp_dat_base[,'Catch_KG'], "c_iz" = rep(0, nrow(samp_dat_all)), "v_i" = rep(0, nrow(samp_dat_all)), "Q_ik" = NULL, "a_i" = rep(area_swept, nrow(samp_dat_all)), covariate_data = cov_dat_all, X1_formula = formula_use, X2_formula = formula_use, parameters = fit_nosp$ParHat, "PredTF_i" = samp_dat_all[,'PRED_TF'], "working_dir" = outfolder, "CompileDir" = here::here(), "run_model" = TRUE, "test_fit" = FALSE, "getReportCovariance" = FALSE, "getJointPrecision" = TRUE, Use_REML = TRUE), silent = TRUE)
+        
         # Append progress file
         progress_new<- "Model without spatial variability converged"
         write(progress_new, file = paste(outfile, "_progress.txt", sep = ""), append = TRUE)
