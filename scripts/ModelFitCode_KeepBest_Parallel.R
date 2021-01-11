@@ -23,7 +23,7 @@ library(doFuture)
 filter <- dplyr::filter
 select <- dplyr::select
 
-docker<- TRUE
+docker<- FALSE
 if(docker){
   #source("/home/andrew.allyn@gmail.com/GitHub/ForecastingChallenge/scripts/VASTfunctions_AJAedits.R")
   #source("/home/andrew.allyn@gmail.com/GitHub/ForecastingChallenge/scripts/VAST_wrapper_func.R")
@@ -150,13 +150,11 @@ dat_nest<- dat_nest %>%
 
 # Detecting cores
 cores_avail<- detectCores()
-library(doFuture)
 registerDoFuture()
 plan(multisession, workers = cores_avail-1)
 
 # I kept getting errors with the compilation here when trying to run in parallel. Not sure why, but trying something by running a simple example to get the VAST_cpp and VAST_so files. Then copying those into the folders as needed.
 ## Setup really simple example for testing
-library(VAST)
 example <- load_example( data_set="EBS_pollock" )
 dat <- subset(example$sampling_data, Year==2013)
 settings <- make_settings(n_x=100, Region=example$Region,
@@ -189,7 +187,8 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
   #for(i in 1:nrow(dat_nest)){
   
   # Get description for forecast challenge, based on years model will predict to
-  fore_dates<- paste(dat_nest$fore_challenge[i], "to2019", sep = "")
+  #fore_dates<- paste(dat_nest$fore_challenge[i], "to2019", sep = "")
+  fore_dates<- paste("2012Only", sep = "")
   
   # Some descriptors about the specific run...
   season_run<- as.character(dat_nest$SEASON)[i]
@@ -217,7 +216,8 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
   samp_dat_all<- dat_run %>%
     drop_na(., {{covs}}) %>%
     select(., one_of(samp_dat_cols))
-  samp_dat_all$PRED_TF<- ifelse(samp_dat_all$EST_YEAR < dat_nest$fore_challenge[i], 0, 1)
+  samp_dat_all$PRED_TF<- ifelse(samp_dat_all$EST_YEAR == 2012, 0, 1)
+  #samp_dat_all$PRED_TF<- ifelse(samp_dat_all$EST_YEAR < dat_nest$fore_challenge[i], 0, 1)
   
   # Finally, need to rename columns...
   samp_dat_all<- samp_dat_all %>%
@@ -298,7 +298,7 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
         
         # Refit the model
         fit_bothAR1<- try(fit_model_eff("settings" = settings_bothAR1_final,
-                                        #bias.correct.control = list(nsplit = 5),
+                                        #bias.correct.control = list(nsplit = 2),
                                         # Spatial info
                                         observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
                                         # Model info
@@ -337,7 +337,7 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
           
           # Refit the model
           fit_betaAR1stRW<- try(fit_model_eff("settings" = settings_betaAR1stRW_final,
-                                              #bias.correct.control = list(nsplit = 5),
+                                              #bias.correct.control = list(nsplit = 2),
                                               # Spatial info
                                               observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
                                               # Model info
@@ -356,7 +356,7 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
           
           # Refit the model
           fit_betaAR1<- try(fit_model_eff("settings" = settings_betaAR1_final,
-                                          #bias.correct.control = list(nsplit = 5),
+                                          #bias.correct.control = list(nsplit = 2),
                                           # Spatial info
                                           observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
                                           # Model info
@@ -396,11 +396,13 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
         
         # Refit the model
         fit_betaRW<- try(fit_model_eff("settings" = settings_betaRW_final, 
-                                       #bias.correct.control = list(nsplit = 5),
+                                       #bias.correct.control = list(nsplit = 2),
                                        # Spatial info
                                        observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
                                        # Model info
-                                       "Lat_i" = samp_dat_all[,'Lat'], "Lon_i" = samp_dat_all[,'Lon'], "t_i" = as.vector(samp_dat_all[,'Year']), "b_i" = samp_dat_base[,'Catch_KG'], "c_iz" = rep(0, nrow(samp_dat_all)), "v_i" = rep(0, nrow(samp_dat_all)), "Q_ik" = NULL, "a_i" = rep(area_swept, nrow(samp_dat_all)), covariate_data = cov_dat_all, X1_formula = formula_use, X2_formula = formula_use, parameters = fit_betaRW$ParHat, "PredTF_i" = samp_dat_all[,'PRED_TF'], "working_dir" = outfolder, "CompileDir" = here::here(), "run_model" = TRUE, "test_fit" = FALSE, "getReportCovariance" = FALSE, "getJointPrecision" = TRUE, Use_REML = TRUE), silent = TRUE)
+                                       "Lat_i" = samp_dat_all[,'Lat'], "Lon_i" = samp_dat_all[,'Lon'], "t_i" = as.vector(samp_dat_all[,'Year']), "b_i" = samp_dat_base[,'Catch_KG'], "c_iz" = rep(0, nrow(samp_dat_all)), "v_i" = rep(0, nrow(samp_dat_all)), "Q_ik" = NULL, "a_i" = rep(area_swept, nrow(samp_dat_all)), covariate_data = cov_dat_all, X1_formula = formula_use, X2_formula = formula_use,
+                                       #parameters = fit_betaRW$ParHat, 
+                                       "PredTF_i" = samp_dat_all[,'PRED_TF'], "working_dir" = outfolder, "CompileDir" = here::here(), "run_model" = TRUE, "test_fit" = FALSE, "getReportCovariance" = FALSE, "getJointPrecision" = TRUE, Use_REML = TRUE), silent = TRUE)
         
         # Append progress file
         progress_new<- "Excellent, model with RW on beta worked"
@@ -416,7 +418,7 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
         
         # Model fit wrapper function
         fit_base<- try(fit_model_eff("settings" = settings_forebase_final,
-                                     #bias.correct.control = list(nsplit = 5),
+                                     #bias.correct.control = list(nsplit = 2),
                                      # Spatial info
                                      observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
                                      # Model info
@@ -461,7 +463,7 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
       
       # Model fit wrapper function
       fit_nost<- try(fit_model_eff("settings" = settings_nost_final,
-                                   #bias.correct.control = list(nsplit = 5),
+                                   #bias.correct.control = list(nsplit = 2),
                                    # Spatial info
                                    observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
                                    # Model info
@@ -500,7 +502,7 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
         
         # Model fit wrapper function
         fit_nosp<- try(fit_model_eff("settings" = settings_nosp_final,
-                                     #bias.correct.control = list(nsplit = 5),
+                                     #bias.correct.control = list(nsplit = 2),
                                      # Spatial info
                                      observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
                                      # Model info
@@ -527,7 +529,7 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
         
         # Model fit wrapper function
         fit_simp<- try(fit_model_eff("settings" = settings_simp,
-                                     #bias.correct.control = list(nsplit = 5),
+                                     #bias.correct.control = list(nsplit = 2),
                                      # Spatial info
                                      observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
                                      # Model info
