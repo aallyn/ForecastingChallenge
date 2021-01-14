@@ -217,8 +217,7 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
   samp_dat_all<- dat_run %>%
     drop_na(., {{covs}}) %>%
     select(., one_of(samp_dat_cols))
-  samp_dat_all$PRED_TF<- ifelse(samp_dat_all$EST_YEAR == 2012, 0, 1)
-  #samp_dat_all$PRED_TF<- ifelse(samp_dat_all$EST_YEAR < dat_nest$fore_challenge[i], 0, 1)
+  samp_dat_all$PRED_TF<- ifelse(samp_dat_all$EST_YEAR < dat_nest$fore_challenge[i], 0, 1)
   
   # Finally, need to rename columns...
   samp_dat_all<- samp_dat_all %>%
