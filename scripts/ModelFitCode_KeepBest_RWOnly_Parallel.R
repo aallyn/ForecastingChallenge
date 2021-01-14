@@ -5,6 +5,8 @@
 # True/False switch as there might be a few packages that need to be installed IF running on DO server
 # Libraries and sourcing functions
 #install.packages("INLA",repos=c(getOption("repos"),INLA="https://inla.r-inla-download.org/R/stable"), dep=TRUE)
+remotes::install_github("HenrikBengtsson/Future")
+remotes::install_github("HenrikBengtsson/doFuture")
 library(TMB)
 library(VAST)
 library(tidyverse)
@@ -141,7 +143,7 @@ if(docker){
 }
 
 dat_nest<- dat_nest %>% 
-  filter(., COMNAME == "YELLOWTAIL FLOUNDER")
+  filter(., COMNAME == "HADDOCK")
 
 # Add in the forechallenges piece...
 fore_challenges_df<- data.frame("COMNAME" = rep(unique(dat_nest$COMNAME), each = length(fore_challenges)), "fore_challenge" = rep(fore_challenges, length(unique(dat_nest$COMNAME))))
