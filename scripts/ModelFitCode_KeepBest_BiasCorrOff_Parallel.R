@@ -4,9 +4,6 @@
 # Preliminaries ----------------------------------------------------------
 # True/False switch as there might be a few packages that need to be installed IF running on DO server
 # Libraries and sourcing functions
-#install.packages("INLA",repos=c(getOption("repos"),INLA="https://inla.r-inla-download.org/R/stable"), dep=TRUE)
-#remotes::install_github("HenrikBengtsson/Future")
-devtools::install_github("HenrikBengtsson/doFuture", force = TRUE)
 library(TMB)
 library(VAST)
 library(tidyverse)
@@ -25,7 +22,7 @@ library(doFuture)
 filter <- dplyr::filter
 select <- dplyr::select
 
-docker<- TRUE
+docker<- FALSE
 if(docker){
   #source("/home/andrew.allyn@gmail.com/GitHub/ForecastingChallenge/scripts/VASTfunctions_AJAedits.R")
   #source("/home/andrew.allyn@gmail.com/GitHub/ForecastingChallenge/scripts/VAST_wrapper_func.R")
@@ -35,6 +32,7 @@ if(docker){
 } else {
   source(here::here("scripts", "VASTfunctions_AJAedits.R"))
   source(here::here("scripts", "VAST_wrapper_func.R"))
+  source(here::here("scripts", "fit_model_eff.R"))
 }
 
 # Load in data -----------------------------------------------------------
@@ -42,14 +40,12 @@ if(docker){
   # Fisheries data
   dat<- read.csv(here::here("data", "ForecastingChallengeModelData.csv"))
   # Land shapefile for mapping
-  #land<- st_read("/home/andrew.allyn@gmail.com/Shapefiles/ne_50m_land/ne_50m_land.shp")
+  land<- st_read(here::here("data", "NELME_sf.shp"))
 } else {
   # Fisheries data
-  fish_dat_path<- shared.path(os = os.use, group = "Mills Lab", folder = "Projects/ForecastingChallenge/data/")
-  dat<- read.csv(paste(fish_dat_path, "ForecastingChallengeModelData.csv", sep = ""))
+  dat<- read.csv(here::here("data", "ForecastingChallengeModelData.csv"))
   # Land shapefile for mapping
-  res_dat_path<- shared.path(os = os.use, group = "RES Data")
-  land<- st_read(paste(res_dat_path, "Shapefiles/ne_50m_land/ne_50m_land.shp", sep = "")) 
+  land<- st_read(here::here("data", "NELME_sf.shp"))
 }
 
 # For testing, reduce data set to speed up model fits
@@ -85,7 +81,7 @@ if(docker){
   nelme_grid<- convert_shapefile(here::here("data", "NELME_sf.shp"), projargs = "+proj=utm +zone=19 +ellps=WGS84 +datum=WGS84 +units=km +no_defs", projargs_for_shapefile = "+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs", grid_dim_km = grid_dim_km, make_plots = FALSE, area_tolerance = 2)
 } else {
   # NELME grid
-  nelme_grid<- convert_shapefile(paste(res_dat_path, "Shapefiles/NELME_regions/NELME_sf.shp", sep = ""), projargs = "+proj=utm +zone=19 +ellps=WGS84 +datum=WGS84 +units=km +no_defs", projargs_for_shapefile = "+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs", grid_dim_km = grid_dim_km, make_plots = FALSE, area_tolerance = 2)
+  nelme_grid<- convert_shapefile(here::here("data", "NELME_sf.shp"), projargs = "+proj=utm +zone=19 +ellps=WGS84 +datum=WGS84 +units=km +no_defs", projargs_for_shapefile = "+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs", grid_dim_km = grid_dim_km, make_plots = FALSE, area_tolerance = 2)
 }
 
 # Visualize
@@ -115,9 +111,10 @@ options_use<- c("SD_site_logdensity" = FALSE, "Calculate_Range" = FALSE, "Calcul
 settings_forebase<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_forebase, RhoConfig = rhoconfig_forebase, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = FALSE)
 
 ### Model formula/fit stuff
-formula_use<- ~ splines::bs(AVGDEPTH, knots = 4, intercept = FALSE) +
-  splines::bs(SODA_BT, knots = 4, intercept = FALSE) +
-  splines::bs(SODA_SST, knots = 4, intercept = FALSE)
+formula_use<- ~ splines::bs(AVGDEPTH, df = 3, intercept = FALSE) +
+  splines::bs(SODA_BT, df = 3, intercept = FALSE) +
+  splines::bs(SODA_SST, df = 3, intercept = FALSE)
+# formula_use<- "~ AVGDEPTH + SODA_BT"
 
 # Create a nested data frame
 dat_nest<- dat %>%
@@ -138,11 +135,16 @@ if(docker){
     dir.create(out_folder)
   }
 } else {
-  out_folder<- shared.path(os = os.use, group = "Mills Lab", folder = "Projects/ForecastingChallenge/Temp Results/")
+  out_folder<- here::here("temp results/")
+  if(!file.exists(out_folder)){
+    dir.create(out_folder)
+  }
 }
 
+# dat_nest<- dat_nest %>% 
+#   filter(., COMNAME == "HADDOCK")
 dat_nest<- dat_nest %>% 
-  filter(., COMNAME == "HADDOCK")
+  filter(., COMNAME == "ATLANTIC COD")
 
 # Add in the forechallenges piece...
 fore_challenges_df<- data.frame("COMNAME" = rep(unique(dat_nest$COMNAME), each = length(fore_challenges)), "fore_challenge" = rep(fore_challenges, length(unique(dat_nest$COMNAME))))
@@ -170,16 +172,15 @@ fit = fit_model(settings=settings,
                 Lat_i=dat$Lat, Lon_i=dat$Lon, t_i=dat$Year,
                 b_i=dat$Catch_KG, a_i=dat$AreaSwept_km2, run_model = FALSE)
 future:::ClusterRegistry("stop")
-vast_files<- c(paste(here::here(), "VAST_v12_0_0.cpp", sep = "/"), paste(here::here(), "VAST_v12_0_0.so", sep = "/"), paste(here::here(), "VAST_v12_0_0.o", sep = "/"))
 
-# Seemed really slow...
-#all<- dat_nest
+### Parallel loop!
 all<- dat_nest
 dat_nest<- all
+
 # Cluster stuff
 cores_avail<- detectCores()
 registerDoFuture()
-plan(multisession, workers = cores_avail-3)
+plan(multisession, workers = cores_avail-1)
 start_time<- Sys.time()
 
 foreach(i = 1:nrow(dat_nest)) %dopar% {
@@ -190,8 +191,7 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
   
   # Get description for forecast challenge, based on years model will predict to
   fore_dates<- paste(dat_nest$fore_challenge[i], "to2019", sep = "")
-  #fore_dates<- paste("2012Only", sep = "")
-  
+
   # Some descriptors about the specific run...
   season_run<- as.character(dat_nest$SEASON)[i]
   spp_run<- as.character(dat_nest$COMNAME)[i]
@@ -204,11 +204,7 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
   }
   
   # Create sub-folder
-  # outfile<- paste(outfolder, "/", paste(fore_dates, season_run, spp_run, sep = "_"), sep = "")
   outfile<- paste(outfolder, "/", fore_dates, sep = "")
-  # if(!file.exists(outfile)){
-  #    dir.create(outfile)
-  # }
   
   # Text file to print progress
   progress_out<- "Starting"
@@ -244,6 +240,17 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
     select(., one_of(c("Year", "Lat", "Lon", covs))) %>%
     data.frame()
   
+  if(explore){
+    summary(cov_dat_all)
+    summary(samp_dat_all)
+    hist(samp_dat_all$Catch_KG)
+    
+    # Extreme values?
+    samp_dat_all<- samp_dat_all %>%
+      filter(., Catch_KG <= 200)
+    cov_dat_all<- cov_dat_all
+  }
+  
   # Base, set all years to be the same -- this could be needed if we struggle to fit any of the more complex models
   cov_dat_simp<- cov_dat_all
   cov_dat_simp$Year<- rep(min(cov_dat_simp$Year), nrow(cov_dat_simp))
@@ -267,7 +274,7 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
     settings_betaAR1<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_forebase, RhoConfig = rhoconfig_betaAR1, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = FALSE)
     
     # Refit the model
-    fit_betaAR1<- try(fit_model_eff("settings" = settings_betaAR1,
+    fit_betaAR1<- try(fit_model("settings" = settings_betaAR1,
                                     #bias.correct.control = list(nsplit = 5),
                                     # Spatial info
                                     observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
@@ -284,7 +291,7 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
       settings_bothAR1<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_forebase, RhoConfig = rhoconfig_bothAR1, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = FALSE)
       
       # Refit the model
-      fit_bothAR1<- try(fit_model_eff("settings" = settings_bothAR1,
+      fit_bothAR1<- try(fit_model("settings" = settings_bothAR1,
                                       #bias.correct.control = list(nsplit = 5),
                                       # Spatial info
                                       observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
@@ -311,7 +318,7 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
         settings_betaAR1stRW<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_forebase, RhoConfig = rhoconfig_betaAR1stRW, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = FALSE)
         
         # Refit the model
-        fit_betaAR1stRW<- try(fit_model_eff("settings" = settings_betaAR1stRW,
+        fit_betaAR1stRW<- try(fit_model("settings" = settings_betaAR1stRW,
                                             #bias.correct.control = list(nsplit = 5),
                                             # Spatial info
                                             observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
@@ -351,7 +358,7 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
       settings_betaRW<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_forebase, RhoConfig = rhoconfig_betaRW, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = FALSE)
       
       # Refit the model
-      fit_betaRW<- try(fit_model_eff("settings" = settings_betaRW, 
+      fit_betaRW<- try(fit_model("settings" = settings_betaRW, 
                                      #bias.correct.control = list(nsplit = 5),
                                      # Spatial info
                                      observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
@@ -394,7 +401,7 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
     settings_nost_betarw<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_nost, RhoConfig = rhoconfig_nost_betarw, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = FALSE)
     
     # Model fit wrapper function
-    fit_nost_betarw<- try(fit_model_eff("settings" = settings_nost_betarw,
+    fit_nost_betarw<- try(fit_model("settings" = settings_nost_betarw,
                                         #bias.correct.control = list(nsplit = 5),
                                         # Spatial info
                                         observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
@@ -425,7 +432,7 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
       settings_nost<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_nost, RhoConfig = rhoconfig_nost, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = FALSE)
       
       # Model fit wrapper function
-      fit_nost<- try(fit_model_eff("settings" = settings_nost,
+      fit_nost<- try(fit_model("settings" = settings_nost,
                                    #bias.correct.control = list(nsplit = 5),
                                    # Spatial info
                                    observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
@@ -454,7 +461,7 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
         settings_nosp<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_nosp, RhoConfig = rhoconfig_nosp, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = FALSE)
         
         # Model fit wrapper function
-        fit_nosp<- try(fit_model_eff("settings" = settings_nosp,
+        fit_nosp<- try(fit_model("settings" = settings_nosp,
                                      #bias.correct.control = list(nsplit = 5),
                                      # Spatial info
                                      observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
@@ -483,7 +490,7 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
           settings_simp<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_simp, RhoConfig = rhoconfig_simp, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = FALSE)
           
           # Model fit wrapper function
-          fit_simp<- try(fit_model_eff("settings" = settings_simp,
+          fit_simp<- try(fit_model("settings" = settings_simp,
                                        #bias.correct.control = list(nsplit = 2),
                                        # Spatial info
                                        observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 

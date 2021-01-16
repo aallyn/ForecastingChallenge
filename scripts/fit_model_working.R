@@ -1,60 +1,50 @@
 ## Arguments
-settings = settings_start_vast
-Lat_i = samp_dat[,'Lat']
-Lon_i = samp_dat[,'Lon']
-t_i = as.vector(samp_dat[,'Year'])
-b_i = samp_dat[,'Catch_KG']
-a_i = rep(area_swept, nrow(samp_dat))
-c_iz = rep(0, length(b_i))
-v_i = rep(0, length(b_i))
-working_dir = paste0(outfile, "/")
+settings = settings_forebase
+observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon'])
+Lat_i = samp_dat_all[,'Lat']
+Lon_i = samp_dat_all[,'Lon']
+t_i = as.vector(samp_dat_all[,'Year'])
+b_i = rep(0, nrow(samp_dat_all))
+a_i = rep(area_swept, nrow(samp_dat_all))
+c_iz = rep(0, nrow(samp_dat_all))
+v_i = rep(0, nrow(samp_dat_all))
+working_dir = outfolder
 X1config_cp = NULL
 X2config_cp = NULL
-covariate_data = cov_dat
+covariate_data = cov_dat_all
 X1_formula = formula_use
 X2_formula = formula_use
 Q1config_k = NULL
 Q2config_k = NULL
-catchability_data 
+catchability_data = NULL
 Q1_formula = ~0
 Q2_formula = ~0
 newtonsteps = 1
-silent = TRUE
 build_model = TRUE
-run_model = FALSE
-test_fit = TRUE
-Region = "other"
-strata.limits = strat_limits
-purpose = "index2"
-FieldConfig = fieldconfig_base
-RhoConfig = rhoconfig_base
-ObsModel = obsmodel_use
-Options = options_use
-use_anisotropy = TRUE
-bias.correct = TRUE
+run_model = TRUE
+test_fit = FALSE
 
-extra_args = list(Region = "/home/andrew.allyn@gmail.com/Shapefiles/NELME_regions/NELME_sf.shp", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_base, RhoConfig = rhoconfig_base, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = TRUE, observations_LL = cbind("Lat" = samp_dat[,'Lat'], "Lon" = samp_dat[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = FALSE, area_tolerance = 0.05)
+extra_args = list(n_x = 400,  Region = "other", strata.limits = strat_limits, purpose = "index2", observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = 25)
 extra_args = c(extra_args, extra_args$extrapolation_args, extra_args$spatial_args, extra_args$optimize_args, extra_args$model_args)
 data_frame = data.frame(Lat_i = Lat_i, Lon_i = Lon_i, a_i = a_i, v_i = v_i, b_i = b_i, t_i = t_i, c_iz = c_iz)
 year_labels = seq(min(t_i), max(t_i))
 years_to_plot = which(year_labels %in% t_i)
+
 message("\n### Writing output from `fit_model` in directory: ",  working_dir)
 dir.create(working_dir, showWarnings = FALSE, recursive = TRUE)
 capture.output(settings, file = file.path(working_dir, "settings.txt"))
+
 message("\n### Making extrapolation-grid")
-extrapolation_args_default = list(Region = settings$Region,  strata.limits = settings$strata.limits, zone = settings$zone,  max_cells = settings$max_cells)
+extrapolation_args_default = list(Region = settings$Region,  strata.limits = settings$strata.limits, zone = settings$zone)
 extrapolation_args_input = combine_lists(input = extra_args, default = extrapolation_args_default, args_to_use = formalArgs(make_extrapolation_info))
 extrapolation_list = do.call(what = make_extrapolation_info, 
                              args = extrapolation_args_input)
+
 message("\n### Making spatial information")
-spatial_args_default = list(grid_size_km = settings$grid_size_km, 
-                            n_x = settings$n_x, Method = settings$Method, Lon_i = Lon_i, 
-                            Lat_i = Lat_i, Extrapolation_List = extrapolation_list, 
-                            DirPath = working_dir, Save_Results = TRUE, fine_scale = settings$fine_scale, 
-                            knot_method = settings$knot_method)
-spatial_args_input = combine_lists(input = extra_args, default = spatial_args_default, 
-                                   args_to_use = c(formalArgs(make_spatial_info), formalArgs(INLA::inla.mesh.create)))
+spatial_args_default = list(grid_size_km = settings$grid_size_km, n_x = settings$n_x, Method = settings$Method, Lon_i = Lon_i, Lat_i = Lat_i, Extrapolation_List = extrapolation_list, DirPath = working_dir, Save_Results = TRUE, fine_scale = settings$fine_scale, knot_method = settings$knot_method)
+spatial_args_input = combine_lists(input = extra_args, default = spatial_args_default, args_to_use = c(formalArgs(make_spatial_info), formalArgs(INLA::inla.mesh.create)))
 spatial_list = do.call(what = make_spatial_info, args = spatial_args_input)
+
 message("\n### Making data object")
 if (missing(covariate_data)) 
   covariate_data = NULL
@@ -73,6 +63,7 @@ data_args_default = list(Version = settings$Version, FieldConfig = settings$Fiel
                          Q1_formula = Q1_formula, Q2_formula = Q2_formula)
 data_args_input = combine_lists(input = extra_args, default = data_args_default)
 data_list = do.call(what = make_data, args = data_args_input)
+
 message("\n### Making TMB object")
 model_args_default = list(TmbData = data_list, RunDir = working_dir, 
                           Version = settings$Version, RhoConfig = settings$RhoConfig, 
@@ -109,13 +100,9 @@ if (test_fit == TRUE) {
 }
 message("\n### Estimating parameters")
 optimize_args_default1 = combine_lists(default = list(lower = tmb_list$Lower, 
-                                                      upper = tmb_list$Upper, loopnum = 2), input = extra_args, 
-                                       args_to_use = formalArgs(TMBhelper::fit_tmb))
-optimize_args_input1 = list(obj = tmb_list$Obj, savedir = NULL, 
-                            newtonsteps = 0, bias.correct = FALSE, control = list(eval.max = 10000, 
-                                                                                  iter.max = 10000, trace = 1), quiet = TRUE, getsd = FALSE)
-optimize_args_input1 = combine_lists(default = optimize_args_default1, 
-                                     input = optimize_args_input1, args_to_use = formalArgs(TMBhelper::fit_tmb))
+                                                      upper = tmb_list$Upper, loopnum = 2), input = extra_args, args_to_use = formalArgs(TMBhelper::fit_tmb))
+optimize_args_input1 = list(obj = tmb_list$Obj, savedir = NULL, newtonsteps = 0, bias.correct = FALSE, control = list(eval.max = 10000, iter.max = 10000, trace = 1), quiet = TRUE, getsd = FALSE)
+optimize_args_input1 = combine_lists(default = optimize_args_default1, input = optimize_args_input1, args_to_use = formalArgs(TMBhelper::fit_tmb))
 parameter_estimates = do.call(what = TMBhelper::fit_tmb, 
                               args = optimize_args_input1)
 if (exists("check_fit") & test_fit == TRUE) {
