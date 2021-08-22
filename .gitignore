@@ -40,6 +40,7 @@ vignettes/*.pdf
 
 # Folders that tend to have large files (data, temp results)
 temp results/
+data/
 
 # VAST specifics
 *.cpp
