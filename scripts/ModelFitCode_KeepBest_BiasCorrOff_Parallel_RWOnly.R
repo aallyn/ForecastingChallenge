@@ -141,10 +141,10 @@ if(docker){
   }
 }
 
+# dat_nest<- dat_nest %>% 
+#    filter(., COMNAME == "HADDOCK")
 dat_nest<- dat_nest %>% 
-   filter(., COMNAME == "HADDOCK")
-#dat_nest<- dat_nest %>% 
-  #filter(., COMNAME == "ATLANTIC COD")
+  filter(., COMNAME == "ATLANTIC COD")
 
 # Add in the forechallenges piece...
 fore_challenges_df<- data.frame("COMNAME" = rep(unique(dat_nest$COMNAME), each = length(fore_challenges)), "fore_challenge" = rep(fore_challenges, length(unique(dat_nest$COMNAME))))
@@ -175,12 +175,18 @@ future:::ClusterRegistry("stop")
 
 ### Parallel loop!
 all<- dat_nest
-dat_nest<- all
+
+dat_nest<- all %>% 
+  filter(., SEASON == "FALL")
+done<- c(8, 10, 12, 13)
+dat_nest<- dat_nest[-done,]
+dat_nest<- all[16,]
+
 
 # Cluster stuff
 cores_avail<- detectCores()
 registerDoFuture()
-plan(multisession, workers = 6)
+plan(multisession, workers = 1)
 start_time<- Sys.time()
 
 foreach(i = 1:nrow(dat_nest)) %dopar% {
@@ -257,121 +263,35 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
     # Append progress file
     progress_new<- "Base model has passed fit checks, trying to add complexity"
     write(progress_new, file = paste(outfile, "_progress.txt", sep = ""), append = TRUE)
-   
-    # Try adding on autoregressive structure to the intercept and remake settings
-    rhoconfig_betaAR1<- c("Beta1" = 4, "Beta2" = 4, "Epsilon1" = 1, "Epsilon2" = 1)
-    settings_betaAR1<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_forebase, RhoConfig = rhoconfig_betaAR1, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = FALSE)
+    
+    # Try RW
+    rhoconfig_betaRW<- c("Beta1" = 2, "Beta2" = 2, "Epsilon1" = 1, "Epsilon2" = 1)
+    settings_betaRW<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_forebase, RhoConfig = rhoconfig_betaRW, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = FALSE)
     
     # Refit the model
-    fit_betaAR1<- try(fit_model("settings" = settings_betaAR1,
-                                    #bias.correct.control = list(nsplit = 5),
-                                    # Spatial info
-                                    observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
-                                    # Model info
-                                    "Lat_i" = samp_dat_all[,'Lat'], "Lon_i" = samp_dat_all[,'Lon'], "t_i" = as.vector(samp_dat_all[,'Year']), "b_i" = samp_dat_all[,'Catch_KG'], "c_iz" = rep(0, nrow(samp_dat_all)), "v_i" = rep(0, nrow(samp_dat_all)), "Q_ik" = NULL, "a_i" = rep(area_swept, nrow(samp_dat_all)), covariate_data = cov_dat_all, X1_formula = formula_use, X2_formula = formula_use, "PredTF_i" = samp_dat_all[,'PRED_TF'], "working_dir" = outfolder, "CompileDir" = here::here(), "run_model" = TRUE, "test_fit" = FALSE, "getReportCovariance" = FALSE, "getJointPrecision" = TRUE, Use_REML = FALSE), silent = TRUE)
+    fit_betaRW<- try(fit_model("settings" = settings_betaRW, 
+                               #bias.correct.control = list(nsplit = 5),
+                               # Spatial info
+                               observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
+                               # Model info
+                               "Lat_i" = samp_dat_all[,'Lat'], "Lon_i" = samp_dat_all[,'Lon'], "t_i" = as.vector(samp_dat_all[,'Year']), "b_i" = samp_dat_all[,'Catch_KG'], "c_iz" = rep(0, nrow(samp_dat_all)), "v_i" = rep(0, nrow(samp_dat_all)), "Q_ik" = NULL, "a_i" = rep(area_swept, nrow(samp_dat_all)), covariate_data = cov_dat_all, X1_formula = formula_use, X2_formula = formula_use, "PredTF_i" = samp_dat_all[,'PRED_TF'], "working_dir" = outfolder, "CompileDir" = here::here(), "run_model" = TRUE, "test_fit" = FALSE, "getReportCovariance" = FALSE, "getJointPrecision" = TRUE, Use_REML = FALSE), silent = TRUE)
     
-    # If that worked, let's try AR1 on spatio-temporal structure too...
-    if(class(fit_betaAR1) == "fit_model" && (max(abs(fit_betaAR1$parameter_estimates$diagnostics$final_gradient)) <= 0.01)) {
+    # If that worked, save it
+    if(class(fit_betaRW) == "fit_model" && (max(abs(fit_betaRW$parameter_estimates$diagnostics$final_gradient)) <= 0.01)){
       # Append progress file
-      progress_new<- "Adding AR1 to beta converged, now trying to add temporal structure to spatio-temporal variability too"
+      progress_new<- "Excellent, model with RW on beta worked"
       write(progress_new, file = paste(outfile, "_progress.txt", sep = ""), append = TRUE)
-      
-      rhoconfig_bothAR1<- c("Beta1" = 4, "Beta2" = 4, "Epsilon1" = 4, "Epsilon2" = 4)
-      settings_bothAR1<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_forebase, RhoConfig = rhoconfig_bothAR1, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = FALSE)
-      
-      # Refit the model
-      fit_bothAR1<- try(fit_model("settings" = settings_bothAR1,
-                                      #bias.correct.control = list(nsplit = 5),
-                                      # Spatial info
-                                      observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
-                                      # Model info
-                                      "Lat_i" = samp_dat_all[,'Lat'], "Lon_i" = samp_dat_all[,'Lon'], "t_i" = as.vector(samp_dat_all[,'Year']), "b_i" = samp_dat_all[,'Catch_KG'], "c_iz" = rep(0, nrow(samp_dat_all)), "v_i" = rep(0, nrow(samp_dat_all)), "Q_ik" = NULL, "a_i" = rep(area_swept, nrow(samp_dat_all)), covariate_data = cov_dat_all, X1_formula = formula_use, X2_formula = formula_use, "PredTF_i" = samp_dat_all[,'PRED_TF'], "working_dir" = outfolder, "CompileDir" = here::here(), "run_model" = TRUE, "test_fit" = FALSE, "getReportCovariance" = FALSE, "getJointPrecision" = TRUE, Use_REML = FALSE), silent = TRUE)
-      
-      # If that worked, we are all done. Save fit_bothAR1 and make note of the model settings
-      if(class(fit_bothAR1) == "fit_model" && max(abs(fit_bothAR1$parameter_estimates$diagnostics$final_gradient)) <= 0.01){
-        # Append progress file
-        progress_new<- "Excellent, model with AR1 structure on both beta and spatio-temporal variation converged"
-        write(progress_new, file = paste(outfile, "_progress.txt", sep = ""), append = TRUE)
-        fit_bothAR1$parameter_estimates$fitted_settings <- "BothAR1"
-        saveRDS(fit_bothAR1, file = paste(outfile, "_bothAR1_modelfit.rds", sep = ""))
-      } 
-      
-      # If that didn't work, next option is to try a RW model for spatio-temporal variation...
-      if(class(fit_bothAR1) == "try-error" || (!class(fit_bothAR1) == "try-error" & max(abs(fit_bothAR1$parameter_estimates$diagnostics$final_gradient)) > 0.01)){
-        # Append progress file
-        progress_new<- "Unable to fit model with AR1 on spatio-temporal variation, trying RW instead"
-        write(progress_new, file = paste(outfile, "_progress.txt", sep = ""), append = TRUE)
-        
-        # Adjusting settings
-        rhoconfig_betaAR1stRW<- c("Beta1" = 4, "Beta2" = 4, "Epsilon1" = 2, "Epsilon2" = 2)
-        settings_betaAR1stRW<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_forebase, RhoConfig = rhoconfig_betaAR1stRW, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = FALSE)
-        
-        # Refit the model
-        fit_betaAR1stRW<- try(fit_model("settings" = settings_betaAR1stRW,
-                                            #bias.correct.control = list(nsplit = 5),
-                                            # Spatial info
-                                            observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
-                                            # Model info
-                                            "Lat_i" = samp_dat_all[,'Lat'], "Lon_i" = samp_dat_all[,'Lon'], "t_i" = as.vector(samp_dat_all[,'Year']), "b_i" = samp_dat_all[,'Catch_KG'], "c_iz" = rep(0, nrow(samp_dat_all)), "v_i" = rep(0, nrow(samp_dat_all)), "Q_ik" = NULL, "a_i" = rep(area_swept, nrow(samp_dat_all)), covariate_data = cov_dat_all, X1_formula = formula_use, X2_formula = formula_use, "PredTF_i" = samp_dat_all[,'PRED_TF'], "working_dir" = outfolder, "CompileDir" = here::here(), "run_model" = TRUE, "test_fit" = FALSE, "getReportCovariance" = FALSE, "getJointPrecision" = TRUE, Use_REML = FALSE), silent = TRUE)
-        
-        # Alright, after running that (even if it failed) we are at the end of this subset. If it worked, we save the betaAR1stRW. 
-        if(class(fit_betaAR1stRW) == "fit_model" && max(abs(fit_betaAR1stRW$parameter_estimates$diagnostics$final_gradient)) <= 0.01){
-          # Append progress file
-          progress_new<- "Excellent, model with AR1 on beta and RW on spatio-temporal variability converged"
-          write(progress_new, file = paste(outfile, "_progress.txt", sep = ""), append = TRUE)
-          fit_betaAR1stRW$parameter_estimates$fitted_settings <- "BetaAR1stRW"
-          saveRDS(fit_betaAR1stRW, file = paste(outfile, "_betaAR1stRW_modelfit.rds", sep = "")) 
-        }
-        
-        # If not, we go back and save the one with just temporal structure on beta
-        if(class(fit_betaAR1stRW) == "try-error" || (!class(fit_betaAR1stRW) == "try-error" & max(abs(fit_betaAR1stRW$parameter_estimates$diagnostics$final_gradient)) > 0.01)){
-          # Append progress file
-          progress_new<- "Despite trying to add temporal structure to spatio-temporal variability, none of the models (AR1 or RW converged), so just using model with temporal structure on beta"
-          write(progress_new, file = paste(outfile, "_progress.txt", sep = ""), append = TRUE)
-          fit_betaAR1$parameter_estimates$fitted_settings <- "BetaAR1"
-          saveRDS(fit_betaAR1, file = paste(outfile, "_betaAR1_modelfit.rds", sep = ""))
-        } 
-      }
-      # End trying AR1 options for beta
-    } 
+      fit_betaRW$parameter_estimates$fitted_settings <- "BetaRW"
+      saveRDS(fit_betaRW, file = paste(outfile, "_betaRW_modelfit.rds", sep = ""))
+    }
     
-    # If that didn't work, then we can try the RW on beta and either save that model OR if that one doesn't work, then just keep the basic forecast model
-    if(class(fit_betaAR1) == "try-error" || (!class(fit_betaAR1) == "try-error" & max(abs(fit_betaAR1$parameter_estimates$diagnostics$final_gradient)) > 0.01)){
-      
+    # If it didn't work, back to the basic model
+    if(class(fit_betaRW) == "try-error" || (!class(fit_betaRW) == "try-error" & max(abs(fit_betaRW$parameter_estimates$diagnostics$final_gradient)) > 0.01)) {
       # Append progress file
-      progress_new<- "Unable to fit AR1 to beta, trying simpler RW instead"
+      progress_new<- "Unable to fit a model with temporal structure on beta, so just going to use the basic forecast model without temporal structure on beta or on spatio-temporal variability"
       write(progress_new, file = paste(outfile, "_progress.txt", sep = ""), append = TRUE)
-      
-      # Try RW
-      rhoconfig_betaRW<- c("Beta1" = 2, "Beta2" = 2, "Epsilon1" = 1, "Epsilon2" = 1)
-      settings_betaRW<- make_settings(n_x = n_x_use, Region = "other", strata.limits = strat_limits, purpose = "index2", FieldConfig = fieldconfig_forebase, RhoConfig = rhoconfig_betaRW, ObsModel = obsmodel_use, Options = options_use, use_anisotropy = TRUE, bias.correct = FALSE)
-      
-      # Refit the model
-      fit_betaRW<- try(fit_model("settings" = settings_betaRW, 
-                                     #bias.correct.control = list(nsplit = 5),
-                                     # Spatial info
-                                     observations_LL = cbind("Lat" = samp_dat_all[,'Lat'], "Lon" = samp_dat_all[, 'Lon']), grid_dim_km = grid_dim_km, make_plots = TRUE, 
-                                     # Model info
-                                     "Lat_i" = samp_dat_all[,'Lat'], "Lon_i" = samp_dat_all[,'Lon'], "t_i" = as.vector(samp_dat_all[,'Year']), "b_i" = samp_dat_all[,'Catch_KG'], "c_iz" = rep(0, nrow(samp_dat_all)), "v_i" = rep(0, nrow(samp_dat_all)), "Q_ik" = NULL, "a_i" = rep(area_swept, nrow(samp_dat_all)), covariate_data = cov_dat_all, X1_formula = formula_use, X2_formula = formula_use, "PredTF_i" = samp_dat_all[,'PRED_TF'], "working_dir" = outfolder, "CompileDir" = here::here(), "run_model" = TRUE, "test_fit" = FALSE, "getReportCovariance" = FALSE, "getJointPrecision" = TRUE, Use_REML = FALSE), silent = TRUE)
-      
-      # If that worked, save it
-      if(class(fit_betaRW) == "fit_model" && (max(abs(fit_betaRW$parameter_estimates$diagnostics$final_gradient)) <= 0.01)){
-        # Append progress file
-        progress_new<- "Excellent, model with RW on beta worked"
-        write(progress_new, file = paste(outfile, "_progress.txt", sep = ""), append = TRUE)
-        fit_betaRW$parameter_estimates$fitted_settings <- "BetaRW"
-        saveRDS(fit_betaRW, file = paste(outfile, "_betaRW_modelfit.rds", sep = ""))
-      }
-      
-      # If it didn't work, back to the basic model
-      if(class(fit_betaRW) == "try-error" || (!class(fit_betaRW) == "try-error" & max(abs(fit_betaRW$parameter_estimates$diagnostics$final_gradient)) > 0.01)) {
-        # Append progress file
-        progress_new<- "Unable to fit a model with temporal structure on beta, so just going to use the basic forecast model without temporal structure on beta or on spatio-temporal variability"
-        write(progress_new, file = paste(outfile, "_progress.txt", sep = ""), append = TRUE)
-        fit_base$parameter_estimates$fitted_settings <- "Base"
-        saveRDS(fit_base, file = paste(outfile, "_base_modelfit.rds", sep = ""))
-      }
-      # End trying RW on beta
+      fit_base$parameter_estimates$fitted_settings <- "Base"
+      saveRDS(fit_base, file = paste(outfile, "_base_modelfit.rds", sep = ""))
     }
     # End trying to add complexity to the base model
   }
@@ -505,6 +425,7 @@ foreach(i = 1:nrow(dat_nest)) %dopar% {
     }
     # End trying even simpler models than the basic forecast model
   }
+  gc()
   # End for each loop over species, seasons, fore_challenge
 }
 
