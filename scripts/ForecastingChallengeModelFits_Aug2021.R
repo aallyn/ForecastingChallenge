@@ -1,8 +1,8 @@
 #####
 ## NSF C-Accel Forecasting Challenge Analysis -- Updated Aug 2021
 ## Key updates:
-  # Using new NOAA data, along with covariates calculated through the sdm_workflow project
-  # Based on previous runs, I think we should be able to run all of the groundfish with the random walk model
+# Using new NOAA data, along with covariates calculated through the sdm_workflow project
+# Based on previous runs, I think we should be able to run all of the groundfish with the random walk model
 #####
 
 
@@ -28,38 +28,47 @@ library(parallel)
 library(doFuture)
 library(tools)
 library(gmRi)
+library(googledrive)
+library(tictoc)
 os_use<- "unix"
 
 rw_only<- TRUE
 docker<- FALSE
 if(docker){
-  #source("/home/andrew.allyn@gmail.com/GitHub/ForecastingChallenge/scripts/VASTfunctions_AJAedits.R")
-  #source("/home/andrew.allyn@gmail.com/GitHub/ForecastingChallenge/scripts/VAST_wrapper_func.R")
-  source(here::here("scripts", "VASTfunctions_AJAedits.R"))
-  source(here::here("scripts", "VAST_wrapper_func.R"))
-  source(here::here("scripts", "fit_model_eff.R"))
+  # Source files
+  source(here::here("ForecastingChallenge/scripts", "vast_functions_fromSDMwkflow.R"))
+  
+  # Set up file paths...
+  mod_data_path<- here::here("block_storage/Dropbox/SDM-Convergence/Data/")
+  spp_name_path<- mod_data_path
+  out_folder<- here::here("ForecastingChallenge/Temp Results/")
+  run_folder<- here::here("ForecastingChallenge/")
 } else {
+  # Source functions
   source(here::here("scripts", "VASTfunctions_AJAedits.R"))
   source(here::here("scripts", "VAST_wrapper_func.R"))
   source("~/GitHub/sdm_workflow/scratch/aja/TargetsSDM/R/vast_functions.R")
+  
+  # File paths
+  mod_data_path<-  "~/GitHub/sdm_workflow/scratch/aja/TargetsSDM/data/combined/"
+  spp_name_path<- "~/Box/Mills Lab/Projects/COCA15_ClimVuln/COCA-SDM/Data/"
+  res_data_path<- "~/Box/RES_Data/"
+  out_folder<- "/Volumes/Seagate Backup /ForecastingChallenge/Temp Results/"
+  run_folder<- "/Volumes/Seagate Backup /ForecastingChallenge/"
 }
-
-## Key paths
-res_data_path<- "~/Box/RES_Data/"
-out_folder<- shared.path(os = os_use, group = "Mills Lab", folder = "Projects/ForecastingChallenge/Temp Results/")
 
 ## Key settings
 testing<- FALSE
 
 # Loading data ---------------------------------------------
-all_dat<- readRDS("~/GitHub/sdm_workflow/scratch/aja/TargetsSDM/data/combined/tidy_mod_data.rds")
+all_dat<- readRDS(paste(mod_data_path, "tidy_mod_data.rds", sep = ""))
 
 # We don't want the DFO data...
 nmfs_dat<- all_dat %>%
   dplyr::filter(., SURVEY == "NMFS")
 
 # We do want the nice species names...
-nice_spp_names<- read_csv("~/Box/Mills Lab/Projects/COCA15_ClimVuln/COCA-SDM/Data/Assesmentfishspecies.csv")
+nice_spp_names<- read_csv(paste(spp_name_path, "Assesmentfishspecies.csv", sep = ""))
 
 nmfs_dat<- nmfs_dat %>%
   left_join(., nice_spp_names, by = c("NMFS_SVSPP" = "SVSPP"))
@@ -130,8 +139,11 @@ dat_nest<- dat_nest %>%
 cores_avail<- detectCores()
 registerDoFuture()
 plan(multisession, workers = cores_avail-2)
+googledrive_use<- FALSE
 
-for(i in 2:nrow(dat_nest)){
+# Timing...
+
+for(i in 357:nrow(dat_nest)){
   
   # Get description for forecast challenge, based on years model will predict to
   fore_dates<- paste(dat_nest$fore_challenge[i], "to2019", sep = "")
@@ -147,9 +159,12 @@ for(i in 2:nrow(dat_nest)){
     dir.create(outfolder)
   }
   
+  # Zip? -- tried doing this with google drive..
+  zip_tf<- spp_run == as.character(dat_nest$COMNAME)[i-1]
+  
   # Create sub-folder
   outfile<- paste(outfolder, "/", fore_dates, sep = "")
-
+  
   # Text file to print progress
   progress_out<- "Starting"
   write(progress_out, file = paste(outfile, "_progress.txt", sep = ""), append = FALSE)
@@ -180,10 +195,10 @@ for(i in 2:nrow(dat_nest)){
     rename(., c("Year" = "EST_YEAR", "Year_Cov" = "Year_Cov", "Lat" = "DECDEG_BEGLAT", "Lon" = "DECDEG_BEGLON")) %>%
     dplyr::select(., one_of(c("Year", "Lat", "Lon", covs))) %>%
     data.frame()
- 
+  
   # Model fit 
-  fit_base<- try(fit_model("settings" = settings_forebase, "Lat_i" = samp_dat_all[, 'Lat'], "Lon_i" = samp_dat_all[, 'Lon'], "t_i" = samp_dat_all[, 'Year'], "c_i" = rep(0, nrow(samp_dat_all)), "b_i" = samp_dat_all[, 'Biomass'], "a_i" = samp_dat_all[, 'Swept'], "PredTF_i" = samp_dat_all[, 'Pred_TF'], "covariate_data" = cov_dat_all, "X1_formula" = formula_use, "X2_formula" = formula_use, "newtonsteps" = 1, "getsd" = TRUE, "getReportCovariance" = TRUE, "run_model" = TRUE, "test_fit" = FALSE,  "Use_REML" = FALSE, "getJointPrecision" = FALSE, "working_dir" = "~/Box/Mills Lab/Projects/ForecastingChallenge", CompileDir = "~/Box/Mills Lab/Projects/ForecastingChallenge"), silent = TRUE)
- 
+  fit_base<- try(fit_model("settings" = settings_forebase, "Lat_i" = samp_dat_all[, 'Lat'], "Lon_i" = samp_dat_all[, 'Lon'], "t_i" = samp_dat_all[, 'Year'], "c_i" = rep(0, nrow(samp_dat_all)), "b_i" = samp_dat_all[, 'Biomass'], "a_i" = samp_dat_all[, 'Swept'], "PredTF_i" = samp_dat_all[, 'Pred_TF'], "covariate_data" = cov_dat_all, "X1_formula" = formula_use, "X2_formula" = formula_use, "newtonsteps" = 1, "getsd" = TRUE, "getReportCovariance" = TRUE, "run_model" = TRUE, "test_fit" = FALSE,  "Use_REML" = FALSE, "getJointPrecision" = FALSE, "working_dir" = run_folder, "CompileDir" = run_folder), silent = TRUE)
+  
   if(class(fit_base) == "fit_model" && (max(abs(fit_base$parameter_estimates$diagnostics$final_gradient)) <= 0.01)){
     fit_coveff<- get_vast_covariate_effects(vast_fit = fit_base, params_plot = c("Depth", "SST_seasonal", "BT_seasonal"), params_plot_levels = 100, effects_pad_values = c(), nice_category_names = spp_run, out_dir = outfolder)
     
@@ -197,6 +212,19 @@ for(i in 2:nrow(dat_nest)){
     progress_new<- "Model with RW on beta and Epsilon failed"
     write(progress_new, file = paste(outfile, "_progress.txt", sep = ""), append = TRUE)
   }
-  # End for each loop over species, seasons, fore_challenge
+  # End for each loop over species, seasons, fore_challenge...write out?
+  
+  if(googledrive_use){
+    if(zip_tf){
+      zip_files<- dir(outfolder, full.names = TRUE)
+      zip(zipfile = paste(outfolder, ".zip", sep = ""), files = zip_files)
+      drive_upload(paste(outfolder, ".zip", sep = ""), path = "Temp Results", name = paste(outfolder, ".zip"))
+      
+      # Clean up
+      unlink(outfolder, recursive = TRUE, force = TRUE, expand = TRUE)
+      unlink(paste(outfolder, ".zip", sep = ""), recursive = TRUE, force = TRUE, expand = TRUE)
+    }
+  }
+  
 }
 
